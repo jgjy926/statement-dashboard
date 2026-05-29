@@ -170,11 +170,27 @@ export function deriveCards(data) {
     }
   }
 
+  // Per-card spend (sum of that card's debits). Consolidated statements carry
+  // one shared due/limit on the primary card, so per-card spend is the only
+  // meaningful figure for supplementary cards.
+  const spendByKey = {};
+  for (const stmt of data.statements || []) {
+    for (const t of stmt.transactions || []) {
+      const l4 = t.card?.last4 || stmt.card_last4;
+      if (!l4) continue;
+      const amt = Number(t.amount) || 0;
+      if (amt >= 0) continue; // debits only
+      const key = `${t.bank_id || stmt.bank_id}:${l4}`;
+      spendByKey[key] = (spendByKey[key] || 0) + Math.abs(amt);
+    }
+  }
+
   // Attach the per-cycle paid flag (key = "<due_statement_id>:<last4>").
   const cards = [...byKey.values()];
   for (const c of cards) {
     const pk = `${c.due_statement_id}:${c.last4}`;
     c.paid = !!(paidStatus[pk] && paidStatus[pk].paid);
+    c.spend = spendByKey[`${c.bank_id}:${c.last4}`] || 0;
   }
   return cards;
 }

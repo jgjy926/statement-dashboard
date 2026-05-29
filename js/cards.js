@@ -31,9 +31,10 @@ function cardHtml(c) {
       </div>
       <div class="cc-num">•••• ${c.last4}</div>
       <div class="cc-figures">
-        <span><i>Due</i> ${formatMYR(c.due_amount)}</span>
-        <span><i>by</i> ${formatDate(c.due_date)}</span>
-        <span><i>Bal</i> ${formatMYR(c.closing_balance)}</span>
+        ${hasDue ? `<span><i>Due</i> ${formatMYR(c.due_amount)}</span>
+        <span><i>by</i> ${formatDate(c.due_date)}</span>` : ""}
+        <span><i>Spent</i> ${formatMYR(c.spend)}</span>
+        ${hasDue && c.credit_limit ? `<span><i>Limit</i> ${formatMYR(c.credit_limit)}</span>` : ""}
       </div>
       ${usage != null ? `<div class="usage"><div class="usage-fill" style="width:${usage}%"></div></div>` : ""}
       ${hasDue ? `<button class="paid-toggle" data-stmt="${c.due_statement_id}" data-last4="${c.last4}" data-paid="${c.paid ? 1 : 0}">
