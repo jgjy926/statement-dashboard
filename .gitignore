@@ -1,0 +1,6 @@
+# OS / editor cruft only — this repo is purely static front-end.
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
