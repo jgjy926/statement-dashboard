@@ -164,6 +164,8 @@ export function deriveCards(data) {
         due_date: isPrimary ? stmt.due_date : prev.due_date,
         due_amount: isPrimary ? stmt.due_amount : prev.due_amount,
         minimum_payment: isPrimary ? stmt.minimum_payment : prev.minimum_payment,
+        // Bank-printed sub-total for this card this statement (newest wins).
+        period_subtotal: c.period_subtotal ?? prev.period_subtotal,
         // Which statement this card's current due belongs to (for the paid flag).
         due_statement_id: isPrimary ? stmt.statement_id : prev.due_statement_id,
       });

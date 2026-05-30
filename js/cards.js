@@ -33,7 +33,9 @@ function cardHtml(c) {
       <div class="cc-figures">
         ${hasDue ? `<span><i>Due</i> ${formatMYR(c.due_amount)}</span>
         <span><i>by</i> ${formatDate(c.due_date)}</span>` : ""}
-        <span><i>Spent</i> ${formatMYR(c.spend)}</span>
+        ${c.period_subtotal != null
+          ? `<span><i>Statement</i> ${formatMYR(c.period_subtotal)}</span>`
+          : `<span><i>Spent</i> ${formatMYR(c.spend)}</span>`}
         ${hasDue && c.credit_limit ? `<span><i>Limit</i> ${formatMYR(c.credit_limit)}</span>` : ""}
       </div>
       ${usage != null ? `<div class="usage"><div class="usage-fill" style="width:${usage}%"></div></div>` : ""}
