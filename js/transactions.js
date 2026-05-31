@@ -39,6 +39,32 @@ function optionList(values, selected) {
     .join("");
 }
 
+// Options whose value differs from their visible label (e.g. statement_id vs.
+// "date · bank ••last4"). Each item is { id, label }.
+function labelOptionList(items, selected) {
+  return [`<option value="">All</option>`]
+    .concat(items.map((o) =>
+      `<option value="${o.id}" ${o.id === selected ? "selected" : ""}>${o.label}</option>`))
+    .join("");
+}
+
+// Distinct statements for the Statement filter, newest first. Each entry is one
+// statement (so a date shared by several statements yields several entries),
+// labelled "<statement_date> · <bank> ••<last4>". The principal last4 is the
+// second-to-last underscore segment of the statement_id (…_<last4>_<YYYY-MM>).
+function statementOptions(rows) {
+  const seen = new Map(); // statement_id -> { id, label, date }
+  for (const t of rows) {
+    if (!t.statement_id || seen.has(t.statement_id)) continue;
+    const parts = String(t.statement_id).split("_");
+    const last4 = parts.length >= 2 ? parts[parts.length - 2] : "";
+    const date = t.statement_date || "?";
+    const label = `${date} · ${t.bank_id || "?"}${last4 ? " ••" + last4 : ""}`;
+    seen.set(t.statement_id, { id: t.statement_id, label, date });
+  }
+  return [...seen.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
 export async function render(container) {
   if (!store.raw) await loadStore();
   const all = store.rows;
@@ -48,6 +74,7 @@ export async function render(container) {
   const tags = distinct(all, (t) => t.tag);
   const cats = distinct(all, (t) => t.category || t.merchant_category);
   const types = distinct(all, (t) => t.entry_type);
+  const stmts = statementOptions(all);
 
   const filtered = applyFilters(searchRows(all, query), criteria);
 
@@ -63,6 +90,7 @@ export async function render(container) {
       <label>Card<select id="f-card">${optionList(last4s, criteria.last4)}</select></label>
       <label>Tag<select id="f-tag">${optionList(tags, criteria.tag)}</select></label>
       <label>Category<select id="f-cat">${optionList(cats, criteria.category)}</select></label>
+      <label>Statement<select id="f-stmt">${labelOptionList(stmts, criteria.statementId)}</select></label>
       <label>Type<select id="f-type">${optionList(types, criteria.entryType)}</select></label>
       <label>From<input type="date" id="f-from" value="${criteria.dateFrom || ""}"></label>
       <label>To<input type="date" id="f-to" value="${criteria.dateTo || ""}"></label>
@@ -97,7 +125,7 @@ export async function render(container) {
       rerenderList(container);
     });
   bind("f-bank", "bank"); bind("f-card", "last4"); bind("f-tag", "tag");
-  bind("f-cat", "category"); bind("f-type", "entryType");
+  bind("f-cat", "category"); bind("f-stmt", "statementId"); bind("f-type", "entryType");
   bind("f-from", "dateFrom"); bind("f-to", "dateTo");
   bind("f-min", "minAmount", true); bind("f-max", "maxAmount", true);
 

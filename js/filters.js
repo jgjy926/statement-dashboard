@@ -14,14 +14,15 @@ export function searchRows(rows, query) {
   });
 }
 
-// criteria keys: bank, last4, tag, category, dateFrom, dateTo, entryType,
-// minAmount, maxAmount. All optional; combined with AND logic.
+// criteria keys: bank, last4, tag, category, statementId, dateFrom, dateTo,
+// entryType, minAmount, maxAmount. All optional; combined with AND logic.
 export function applyFilters(rows, c = {}) {
   return rows.filter((t) => {
     if (c.bank && t.bank_id !== c.bank) return false;
     if (c.last4 && (t.card?.last4 || "") !== c.last4) return false;
     if (c.tag && t.tag !== c.tag) return false;
     if (c.category && (t.category || t.merchant_category || "") !== c.category) return false;
+    if (c.statementId && t.statement_id !== c.statementId) return false;
     if (c.entryType && t.entry_type !== c.entryType) return false;
 
     const date = t.transaction_date || t.posting_date || "";
