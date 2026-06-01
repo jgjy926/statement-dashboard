@@ -196,8 +196,12 @@ function detailView(t) {
 function editView(t) {
   const tagOpts = (store.config?.tags?.fixed || Object.keys(TAG_COLORS))
     .map((tg) => `<option value="${tg}" ${tg === t.tag ? "selected" : ""}>${tg}</option>`).join("");
+  // Edit the single "date" the rest of the UI keys off (posting_date, with
+  // transaction_date kept in sync — same convention as manual entries).
+  const dateVal = (t.posting_date || t.transaction_date || "").slice(0, 10);
   return `
     <div class="sheet-head"><h2>Edit transaction</h2></div>
+    <label>Date<input id="e-date" type="date" value="${dateVal}"></label>
     <label>Description<input id="e-desc" value="${(t.description || "").replace(/"/g, "&quot;")}"></label>
     <label>Amount<input id="e-amt" type="number" step="0.01" value="${t.amount}"></label>
     <label>Tag<select id="e-tag">${tagOpts}</select></label>
@@ -219,6 +223,12 @@ async function saveEdit(t, node, container) {
     category: node.querySelector("#e-cat").value,
     notes: node.querySelector("#e-notes").value,
   };
+  // Keep posting_date and transaction_date in sync to the edited date.
+  const date = node.querySelector("#e-date").value;
+  if (date) {
+    payload.posting_date = date;
+    payload.transaction_date = date;
+  }
   const btn = node.querySelector("#save-btn");
   btn.disabled = true; btn.textContent = "Saving…";
   try {
