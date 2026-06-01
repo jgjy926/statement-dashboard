@@ -180,6 +180,8 @@ textarea { min-height: 64px; resize: vertical; }
 .cc-num { font-size: 0.92rem; letter-spacing: 1.5px; margin: 6px 0 8px; }
 .cc-figures { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; }
 .cc-figures i { font-style: normal; opacity: 0.6; font-size: 0.62rem; text-transform: uppercase; margin-right: 2px; }
+.sweep { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.15); }
+.sweep i { font-style: normal; opacity: 0.6; font-size: 0.62rem; text-transform: uppercase; margin-right: 2px; }
 .usage { height: 4px; background: rgba(255,255,255,0.25); border-radius: 999px; margin-top: 10px; overflow: hidden; }
 .usage-fill { height: 100%; background: #ffd54f; }
 

@@ -39,7 +39,12 @@ function cardHtml(c) {
         ${hasDue && c.credit_limit ? `<span><i>Limit</i> ${formatMYR(c.credit_limit)}</span>` : ""}
       </div>
       ${usage != null ? `<div class="usage"><div class="usage-fill" style="width:${usage}%"></div></div>` : ""}
-      ${hasDue ? `<button class="paid-toggle" data-stmt="${c.due_statement_id}" data-last4="${c.last4}" data-paid="${c.paid ? 1 : 0}">
+      ${c.required_swipes ? `<div class="sweep">
+        <span><i>Sweeps</i> ${c.sweeps}/${c.required_swipes}</span>
+        <span><i>To waive</i> ${c.sweeps_pending}</span>
+        ${c.months_left != null ? `<span><i>Resets in</i> ${c.months_left}mo</span>` : ""}
+      </div>` : ""}
+      ${!c.is_supplementary ? `<button class="paid-toggle" data-stmt="${c.cycle_statement_id}" data-last4="${c.last4}" data-paid="${c.paid ? 1 : 0}">
         ${c.paid ? "↩︎ Unpaid" : "✓ Paid"}</button>` : ""}
     </div>`;
 }

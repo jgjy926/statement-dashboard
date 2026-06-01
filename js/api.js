@@ -130,6 +130,22 @@ export function flattenTransactions(data) {
   return rows;
 }
 
+// Current annual-fee anniversary window for a card. `anniversaryMonth` is 1-12
+// (the month the fee is charged). Returns the most recent occurrence of that
+// month up to today as the window start, +12 months as the end, and whole
+// months remaining until the window resets. Dates are ISO "YYYY-MM-DD" so they
+// compare lexicographically against txn.transaction_date.
+export function anniversaryWindow(anniversaryMonth, now = new Date()) {
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1; // 1-12
+  const startYear = m >= anniversaryMonth ? y : y - 1;
+  const pad = (n) => String(n).padStart(2, "0");
+  const startIso = `${startYear}-${pad(anniversaryMonth)}-01`;
+  const endIso = `${startYear + 1}-${pad(anniversaryMonth)}-01`;
+  const monthsLeft = (startYear + 1 - y) * 12 + (anniversaryMonth - m);
+  return { startIso, endIso, monthsLeft: Math.max(0, monthsLeft) };
+}
+
 // One card per (bank_id, last4), enriched with the latest statement's balances.
 // Cards come from statements[].cards[] plus the statement's headline card.
 export function deriveCards(data) {
@@ -146,10 +162,19 @@ export function deriveCards(data) {
       ? stmt.cards
       : [{ last4: stmt.card_last4, network: stmt.card_network, name: stmt.card_id }];
 
+    // The statement's headline balances belong to its primary card (card_last4).
+    // If that number matches no card in the list (e.g. a mis-detected header),
+    // the figures would be orphaned and vanish from the UI — so fall back to the
+    // first non-supplementary card as the primary.
+    const hasPrimary = cardList.some((c) => c.last4 === stmt.card_last4);
+    const fallbackPrimary = hasPrimary
+      ? stmt.card_last4
+      : (cardList.find((c) => !c.is_supplementary) || cardList[0] || {}).last4;
+
     for (const c of cardList) {
       if (!c.last4) continue;
       const key = `${stmt.bank_id}:${c.last4}`;
-      const isPrimary = c.last4 === stmt.card_last4;
+      const isPrimary = c.last4 === fallbackPrimary;
       // Later (newer) statements overwrite, so the freshest balances win.
       const prev = byKey.get(key) || {};
       byKey.set(key, {
@@ -168,14 +193,31 @@ export function deriveCards(data) {
         period_subtotal: c.period_subtotal ?? prev.period_subtotal,
         // Which statement this card's current due belongs to (for the paid flag).
         due_statement_id: isPrimary ? stmt.statement_id : prev.due_statement_id,
+        // Newest statement ANY card appears in — keys the per-card paid flag so
+        // every (non-supp) card, not just the statement primary, can be toggled.
+        cycle_statement_id: stmt.statement_id,
+        // Annual-fee waiver (sweep) settings, stamped per card by the parser.
+        anniversary_month: c.anniversary_month ?? prev.anniversary_month,
+        required_swipes: c.required_swipes ?? prev.required_swipes,
+        min_swipe_amount: c.min_swipe_amount ?? prev.min_swipe_amount,
       });
     }
   }
 
-  // Per-card spend (sum of that card's debits). Consolidated statements carry
-  // one shared due/limit on the primary card, so per-card spend is the only
-  // meaningful figure for supplementary cards.
+  // Per-cycle anniversary window for cards that track a fee waiver, keyed the
+  // same way as spendByKey so the txn loop below can tally swipes in one pass.
+  const windowByKey = {};
+  for (const [key, c] of byKey) {
+    if (c.anniversary_month && c.required_swipes) {
+      windowByKey[key] = anniversaryWindow(c.anniversary_month);
+    }
+  }
+
+  // Per-card spend (sum of that card's debits) and qualifying swipe count for
+  // the annual-fee waiver. Consolidated statements carry one shared due/limit on
+  // the primary card, so per-card spend is the only meaningful figure for supps.
   const spendByKey = {};
+  const sweepByKey = {};
   for (const stmt of data.statements || []) {
     for (const t of stmt.transactions || []) {
       const l4 = t.card?.last4 || stmt.card_last4;
@@ -184,15 +226,33 @@ export function deriveCards(data) {
       if (amt >= 0) continue; // debits only
       const key = `${t.bank_id || stmt.bank_id}:${l4}`;
       spendByKey[key] = (spendByKey[key] || 0) + Math.abs(amt);
+
+      // A "swipe" = a debit inside the card's current anniversary window that
+      // clears any minimum-per-transaction the bank requires.
+      const win = windowByKey[key];
+      if (win) {
+        const d = t.transaction_date || t.posting_date || "";
+        const min = byKey.get(key).min_swipe_amount || 0;
+        if (d >= win.startIso && d < win.endIso && Math.abs(amt) >= min) {
+          sweepByKey[key] = (sweepByKey[key] || 0) + 1;
+        }
+      }
     }
   }
 
-  // Attach the per-cycle paid flag (key = "<due_statement_id>:<last4>").
+  // Attach the per-cycle paid flag (key = "<cycle_statement_id>:<last4>") and
+  // sweep progress.
   const cards = [...byKey.values()];
   for (const c of cards) {
-    const pk = `${c.due_statement_id}:${c.last4}`;
+    const pk = `${c.cycle_statement_id}:${c.last4}`;
     c.paid = !!(paidStatus[pk] && paidStatus[pk].paid);
     c.spend = spendByKey[`${c.bank_id}:${c.last4}`] || 0;
+    if (c.required_swipes) {
+      const key = `${c.bank_id}:${c.last4}`;
+      c.sweeps = sweepByKey[key] || 0;
+      c.sweeps_pending = Math.max(0, c.required_swipes - c.sweeps);
+      c.months_left = windowByKey[key] ? windowByKey[key].monthsLeft : null;
+    }
   }
   return cards;
 }
