@@ -204,6 +204,29 @@ export function deriveCards(data) {
     }
   }
 
+  // Manual-only cards: the synthetic manual bucket has no statement-level card,
+  // but each manual txn carries its own card. Surface those so a manually-tracked
+  // card (e.g. a debit card with no parsed statement) still appears in the Cards
+  // tab and the Add form's card picker. Skip any card already seen in a statement.
+  for (const stmt of statements) {
+    if (stmt.statement_type !== "manual") continue;
+    for (const t of stmt.transactions || []) {
+      const l4 = t.card?.last4;
+      const bank = t.bank_id || stmt.bank_id;
+      if (!l4 || !bank) continue;
+      const key = `${bank}:${l4}`;
+      if (byKey.has(key)) continue;
+      byKey.set(key, {
+        bank_id: bank,
+        last4: l4,
+        network: t.card?.network || null,
+        name: t.card?.name || l4,
+        is_supplementary: false,
+        manual_only: true,
+      });
+    }
+  }
+
   // Per-cycle anniversary window for cards that track a fee waiver, keyed the
   // same way as spendByKey so the txn loop below can tally swipes in one pass.
   const windowByKey = {};

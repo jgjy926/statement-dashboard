@@ -30,6 +30,11 @@ export async function render(container) {
       <label>Date *<input type="date" id="m-date" value="${today}" required></label>
       <label>Bank *<select id="m-bank" required><option value="">Select…</option>${bankOpts}</select></label>
       <label>Card *<select id="m-card" required><option value="">Select bank first</option></select></label>
+      <div id="new-card-fields" hidden>
+        <label>New card name *<input id="m-newname" placeholder="e.g. PB UTAR Debit"></label>
+        <label>Last 4 digits *<input id="m-newlast4" maxlength="4" inputmode="numeric" placeholder="1234"></label>
+        <label>Network<input id="m-newnet" placeholder="e.g. Mastercard"></label>
+      </div>
       <label>Description *<input id="m-desc" required></label>
       <label>Amount (RM) *<input type="number" step="0.01" min="0" id="m-amt" required></label>
       <label>Tag *<select id="m-tag" required><option value="">Select…</option>${tagOpts}</select></label>
@@ -49,14 +54,25 @@ export async function render(container) {
 
   const bankSel = document.getElementById("m-bank");
   const cardSel = document.getElementById("m-card");
+  const newCardFields = document.getElementById("new-card-fields");
+
+  // Sentinel value for the "add a card that has no parsed statement yet" option.
+  const NEW_CARD = "__new__";
+
+  function toggleNewCard() {
+    newCardFields.hidden = cardSel.value !== NEW_CARD;
+  }
 
   function refreshCards() {
     const list = cards.filter((c) => c.bank_id === bankSel.value);
-    cardSel.innerHTML = list.length
-      ? list.map((c) => `<option value="${c.last4}">${c.name || c.last4} ••${c.last4} (${c.network || "?"})</option>`).join("")
-      : `<option value="">No cards</option>`;
+    const opts = list
+      .map((c) => `<option value="${c.last4}">${c.name || c.last4} ••${c.last4} (${c.network || "?"})</option>`)
+      .join("");
+    cardSel.innerHTML = (bankSel.value ? opts : "") + `<option value="${NEW_CARD}">+ Add new card…</option>`;
+    toggleNewCard();
   }
   bankSel.addEventListener("change", refreshCards);
+  cardSel.addEventListener("change", toggleNewCard);
 
   // Auto-calc exchange rate when both amount and original amount are present.
   const recalcRate = () => {
@@ -81,15 +97,28 @@ async function submit(cards, container) {
     if (!val(id)) { showToast(`${label} is required`, "error"); return; }
   }
 
-  const last4 = val("m-card");
   const bank = val("m-bank");
-  const card = cards.find((c) => c.bank_id === bank && c.last4 === last4);
   const tag = val("m-tag");
+
+  // Resolve the card: either an existing one (picked by last4) or a brand-new
+  // one typed into the new-card fields (for a card with no parsed statement).
+  let last4, cardInfo;
+  if (val("m-card") === "__new__") {
+    const name = val("m-newname");
+    last4 = val("m-newlast4");
+    if (!name) { showToast("New card name is required", "error"); return; }
+    if (!/^\d{4}$/.test(last4)) { showToast("Last 4 digits must be 4 numbers", "error"); return; }
+    cardInfo = { last4, network: val("m-newnet") || null, name };
+  } else {
+    last4 = val("m-card");
+    const card = cards.find((c) => c.bank_id === bank && c.last4 === last4);
+    cardInfo = { last4, network: card?.network || null, name: card?.name || null };
+  }
 
   const payload = {
     date: val("m-date"),
     bank_id: bank,
-    card: { last4, network: card?.network || null, name: card?.name || null },
+    card: cardInfo,
     description: val("m-desc"),
     amount: signedAmount(tag, val("m-amt")),
     currency: "MYR",
