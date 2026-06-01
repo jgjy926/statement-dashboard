@@ -64,7 +64,7 @@ export function monthlyBars(canvas, rows, months = 6, color = "#34a853") {
   for (const t of rows) {
     const amt = Number(t.amount) || 0;
     if (amt <= 0) continue;
-    const key = (t.transaction_date || t.posting_date || "").slice(0, 7);
+    const key = (t.posting_date || t.transaction_date || "").slice(0, 7);
     if (key in totals) totals[key] += amt;
   }
   const labels = keys.map((k) => {
@@ -101,7 +101,7 @@ export function lineByMonth(canvas, rows, months = 6) {
   for (const t of rows) {
     const amt = Number(t.amount) || 0;
     if (amt >= 0) continue;
-    const date = t.transaction_date || t.posting_date || "";
+    const date = t.posting_date || t.transaction_date || "";
     const key = date.slice(0, 7);
     if (key in totals) totals[key] += Math.abs(amt);
   }

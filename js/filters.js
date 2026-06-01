@@ -25,7 +25,7 @@ export function applyFilters(rows, c = {}) {
     if (c.statementId && t.statement_id !== c.statementId) return false;
     if (c.entryType && t.entry_type !== c.entryType) return false;
 
-    const date = t.transaction_date || t.posting_date || "";
+    const date = t.posting_date || t.transaction_date || "";
     if (c.dateFrom && date < c.dateFrom) return false;
     if (c.dateTo && date > c.dateTo) return false;
 

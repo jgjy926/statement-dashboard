@@ -24,7 +24,7 @@ function autoPlans() {
     if (!prev || current > prev.current) {
       groups.set(key, {
         id: key, source: "auto", name, monthly, tenure, current,
-        tag: t.tag, last4: t.card?.last4, last_date: t.transaction_date || t.posting_date,
+        tag: t.tag, last4: t.card?.last4, last_date: t.posting_date || t.transaction_date,
       });
     }
   }

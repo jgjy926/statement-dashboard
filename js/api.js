@@ -121,10 +121,10 @@ export function flattenTransactions(data) {
       });
     }
   }
-  // Newest first by transaction_date (fall back to posting_date).
+  // Newest first by posting_date (fall back to transaction_date).
   rows.sort((a, b) =>
-    (b.transaction_date || b.posting_date || "").localeCompare(
-      a.transaction_date || a.posting_date || ""
+    (b.posting_date || b.transaction_date || "").localeCompare(
+      a.posting_date || a.transaction_date || ""
     )
   );
   return rows;
@@ -134,7 +134,7 @@ export function flattenTransactions(data) {
 // (the month the fee is charged). Returns the most recent occurrence of that
 // month up to today as the window start, +12 months as the end, and whole
 // months remaining until the window resets. Dates are ISO "YYYY-MM-DD" so they
-// compare lexicographically against txn.transaction_date.
+// compare lexicographically against txn.posting_date.
 export function anniversaryWindow(anniversaryMonth, now = new Date()) {
   const y = now.getFullYear();
   const m = now.getMonth() + 1; // 1-12
@@ -231,7 +231,7 @@ export function deriveCards(data) {
       // clears any minimum-per-transaction the bank requires.
       const win = windowByKey[key];
       if (win) {
-        const d = t.transaction_date || t.posting_date || "";
+        const d = t.posting_date || t.transaction_date || "";
         const min = byKey.get(key).min_swipe_amount || 0;
         if (d >= win.startIso && d < win.endIso && Math.abs(amt) >= min) {
           sweepByKey[key] = (sweepByKey[key] || 0) + 1;

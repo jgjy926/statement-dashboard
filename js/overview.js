@@ -27,7 +27,7 @@ function rangeBounds() {
 }
 
 function inRange(t, from, to) {
-  const d = t.transaction_date || t.posting_date || "";
+  const d = t.posting_date || t.transaction_date || "";
   return d >= from && d <= to;
 }
 

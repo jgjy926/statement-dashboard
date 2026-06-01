@@ -11,7 +11,7 @@ let selectedCard = null; // last4 filter for the list
 const isCashback = (t) => t.tag === "Cash Back" && Number(t.amount) > 0;
 
 function inPeriod(t) {
-  const d = t.transaction_date || t.posting_date || "";
+  const d = t.posting_date || t.transaction_date || "";
   return (!year || d.slice(0, 4) === year) && (!month || d.slice(5, 7) === month);
 }
 
@@ -23,7 +23,7 @@ export async function render(container) {
 
   // KPIs
   const total = cb.reduce((s, t) => s + Number(t.amount), 0);
-  const monthsSpan = new Set(cb.map((t) => (t.transaction_date || t.posting_date || "").slice(0, 7))).size || 1;
+  const monthsSpan = new Set(cb.map((t) => (t.posting_date || t.transaction_date || "").slice(0, 7))).size || 1;
   const monthlyAvg = total / monthsSpan;
   // Effective rate = cash back ÷ spend in the same period.
   const spend = store.rows
@@ -45,10 +45,12 @@ export async function render(container) {
     .sort((a, b) => b.total - a.total)[0];
 
   // Years for the filter
-  const years = [...new Set(allCB.map((t) => (t.transaction_date || t.posting_date || "").slice(0, 4)))].sort().reverse();
+  const years = [...new Set(allCB.map((t) => (t.posting_date || t.transaction_date || "").slice(0, 4)))].sort().reverse();
 
   const list = (selectedCard ? cb.filter((t) => (t.card?.last4 || "—") === selectedCard) : cb)
-    .sort((a, b) => (b.transaction_date || "").localeCompare(a.transaction_date || ""));
+    .sort((a, b) =>
+      (b.posting_date || b.transaction_date || "").localeCompare(a.posting_date || a.transaction_date || "")
+    );
 
   container.innerHTML = `
     <div class="tab-head"><h1>Cash Back</h1></div>
@@ -93,7 +95,7 @@ export async function render(container) {
       <ul class="list">
         ${list.length ? list.map((t) => `
           <li class="list-row">
-            <div><strong>${t.merchant || t.description}</strong><div class="txn-sub">${formatDate(t.transaction_date || t.posting_date)} · ••${t.card?.last4 || "—"}</div></div>
+            <div><strong>${t.merchant || t.description}</strong><div class="txn-sub">${formatDate(t.posting_date || t.transaction_date)} · ••${t.card?.last4 || "—"}</div></div>
             <div class="right txn-amt pos">${formatMYR(t.amount)}</div>
           </li>`).join("") : `<li class="empty">No cash back transactions</li>`}
       </ul>

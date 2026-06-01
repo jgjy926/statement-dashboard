@@ -24,7 +24,7 @@ function rowHtml(t) {
     <li class="txn-row" data-id="${t.id}">
       <div class="txn-main">
         <div class="txn-merchant">${t.merchant || t.description || "—"} ${entryBadge(t.entry_type)}</div>
-        <div class="txn-sub">${formatDate(t.transaction_date || t.posting_date)} | ${t.card?.name || t.bank_id || "—"} · ••${t.card?.last4 || "—"}</div>
+        <div class="txn-sub">${formatDate(t.posting_date || t.transaction_date)} | ${t.card?.name || t.bank_id || "—"} · ••${t.card?.last4 || "—"}</div>
       </div>
       <div class="txn-right">
         <div class="txn-amt ${cls}">${formatMYR(amt)}</div>
@@ -180,7 +180,7 @@ function detailView(t) {
   return `
     <div class="sheet-head"><h2>${t.merchant || t.description}</h2><button id="sheet-close" class="icon-btn">✕</button></div>
     ${field("Amount", formatMYR(t.amount))}
-    ${field("Date", formatDate(t.transaction_date || t.posting_date))}
+    ${field("Date", formatDate(t.posting_date || t.transaction_date))}
     ${field("Description", t.description)}
     ${field("Tag", t.tag)}
     ${field("Category", t.category || t.merchant_category)}
