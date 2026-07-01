@@ -41,11 +41,15 @@ function thisMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// A plan groups by merchant + tenure + card, NOT by exact amount: instalment
-// rows vary by a sen or two (e.g. MUSEE 133.33 / 133.35) which would otherwise
-// split one plan into several phantom plans.
-function planKey(name, tenure, last4) {
-  return `${(name || "").toLowerCase().trim()}|${tenure}|${last4 || ""}`;
+// A plan groups by merchant + tenure + card + ROUNDED monthly. Rounding to the
+// nearest ringgit tolerates the sen-level drift within one plan (e.g. MUSEE
+// 133.33 / 133.35 → both 133) while keeping genuinely distinct plans apart —
+// e.g. three "BALANCE TRANSFER PLAN G" on the same card for 420 / 200 / 300 are
+// three separate plans, not one. (Grouping on exact amount split MUSEE; grouping
+// without amount at all merged the three BTs — this is the middle ground.)
+function planKey(name, tenure, last4, monthly) {
+  const amt = Math.round(Number(monthly) || 0);
+  return `${(name || "").toLowerCase().trim()}|${tenure}|${last4 || ""}|${amt}`;
 }
 
 // Group Instalment/BT transactions that carry a ":NNN/NNN" counter into plans.
@@ -61,7 +65,7 @@ function autoPlans() {
     const name = (t.description || "").split(":")[0].trim();
     const last4 = t.card?.last4 || "";
     const stmtMonth = toYM(t.posting_date || t.transaction_date);
-    const key = planKey(name, tenure, last4);
+    const key = planKey(name, tenure, last4, monthly);
     const prev = groups.get(key);
     // Keep the row with the highest counter — the most recent statement.
     if (!prev || counter > prev._counter) {
@@ -107,9 +111,9 @@ export async function render(container) {
   // Manual plans win over an auto plan for the same merchant+tenure+card, so a
   // manually managed plan isn't double-counted against its auto twin.
   const manual = manualPlans().map(withDerived);
-  const manualKeys = new Set(manual.map((p) => planKey(p.name, p.tenure, p.last4)));
+  const manualKeys = new Set(manual.map((p) => planKey(p.name, p.tenure, p.last4, p.monthly)));
   const auto = autoPlans().map(withDerived)
-    .filter((p) => !manualKeys.has(planKey(p.name, p.tenure, p.last4)));
+    .filter((p) => !manualKeys.has(planKey(p.name, p.tenure, p.last4, p.monthly)));
 
   const all = [...manual, ...auto].sort((a, b) => a.name.localeCompare(b.name));
   const active = all.filter((p) => !p.done);
