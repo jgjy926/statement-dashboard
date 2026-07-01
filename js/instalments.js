@@ -1,30 +1,75 @@
-// Instalments tab: auto-detected plans (from ":NNN/NNN" in descriptions) plus
-// manually managed plans (instalment_plans store via the Worker).
+// Instalments tab: auto-detected plans (from ":NNN/NNN" progress in statement
+// descriptions) plus manually managed plans (instalment_plans store, via the
+// Worker). Both Instalment and Balance Transfer plans are shown.
+//
+// Progress model — the plan's month is derived from a start_month anchor and the
+// CURRENT calendar month, so a plan advances on its own between statements and
+// completes automatically:
+//   * auto plans   -> start_month inferred from the statement that carried the
+//                     counter:  start = statementMonth - (counter - 1)
+//   * manual plans -> start_month entered once in the form
+//   current = clamp(monthsBetween(start_month, thisMonth) + 1, 0, tenure)
+// Completed plans (current >= tenure) drop out of the active commitment/remaining
+// totals and move to a separate "Completed" section.
 import {
-  store, loadStore, formatMYR, formatDate, tagChip,
+  store, loadStore, formatMYR, tagChip,
   openSheet, closeSheet, showToast,
 } from "./app.js";
 import { createInstalmentPlan, updateInstalmentPlan, deleteInstalmentPlan } from "./api.js";
 
 const PROGRESS_RE = /:\s*(\d+)\s*\/\s*(\d+)/; // e.g. ":007/012"
 
-// Group instalment/BT transactions into plans by name + monthly amount.
+// --- month helpers (all months are "YYYY-MM" strings) -----------------------
+function toYM(dateStr) {
+  const m = String(dateStr || "").match(/(\d{4})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+function monthsBetween(a, b) {
+  const A = toYM(a), B = toYM(b);
+  if (!A || !B) return 0;
+  const [ay, am] = A.split("-").map(Number);
+  const [by, bm] = B.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
+function addMonths(ym, delta) {
+  const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
+  const idx = y * 12 + (m - 1) + delta;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}`;
+}
+function thisMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// A plan groups by merchant + tenure + card, NOT by exact amount: instalment
+// rows vary by a sen or two (e.g. MUSEE 133.33 / 133.35) which would otherwise
+// split one plan into several phantom plans.
+function planKey(name, tenure, last4) {
+  return `${(name || "").toLowerCase().trim()}|${tenure}|${last4 || ""}`;
+}
+
+// Group Instalment/BT transactions that carry a ":NNN/NNN" counter into plans.
 function autoPlans() {
   const groups = new Map();
-  for (const t of store.rows) {
+  for (const t of store.rows || []) {
     if (!["Instalment", "Balance Transfer"].includes(t.tag)) continue;
     const m = (t.description || "").match(PROGRESS_RE);
     if (!m) continue;
-    const current = Number(m[1]);
+    const counter = Number(m[1]);
     const tenure = Number(m[2]);
     const monthly = Math.abs(Number(t.amount) || 0);
     const name = (t.description || "").split(":")[0].trim();
-    const key = `${name}|${monthly}|${tenure}`;
+    const last4 = t.card?.last4 || "";
+    const stmtMonth = toYM(t.posting_date || t.transaction_date);
+    const key = planKey(name, tenure, last4);
     const prev = groups.get(key);
-    if (!prev || current > prev.current) {
+    // Keep the row with the highest counter — the most recent statement.
+    if (!prev || counter > prev._counter) {
       groups.set(key, {
-        id: key, source: "auto", name, monthly, tenure, current,
-        tag: t.tag, last4: t.card?.last4, last_date: t.posting_date || t.transaction_date,
+        id: `auto:${key}`, source: "auto", name, monthly, tenure, tag: t.tag,
+        last4, _counter: counter,
+        // Anchor the plan's start so `current` can advance by real months.
+        start_month: stmtMonth ? addMonths(stmtMonth, -(counter - 1)) : null,
       });
     }
   }
@@ -35,22 +80,42 @@ function manualPlans() {
   return (store.raw?.instalment_plans || []).map((p) => ({ ...p, source: "manual" }));
 }
 
-function planMetrics(p) {
-  const total = p.monthly * p.tenure;
-  const paid = p.monthly * p.current;
+// Resolve a plan's live position from its start_month and the current month.
+// Falls back to a stored `current` for legacy manual plans that predate
+// start_month, and finally to the last statement counter for an auto plan whose
+// start couldn't be inferred.
+function withDerived(p) {
+  const tenure = Number(p.tenure) || 0;
+  let current;
+  if (p.start_month) current = monthsBetween(p.start_month, thisMonth()) + 1;
+  else if (typeof p.current === "number") current = p.current;
+  else current = p._counter || 0;
+  current = Math.max(0, Math.min(tenure, current));
+
+  const monthly = Number(p.monthly) || 0;
+  const total = monthly * tenure;
+  const paid = monthly * current;
   const remaining = Math.max(0, total - paid);
-  const pct = p.tenure ? Math.min(100, Math.round((p.current / p.tenure) * 100)) : 0;
-  const done = p.current >= p.tenure;
-  return { total, paid, remaining, pct, done };
+  const pct = tenure ? Math.min(100, Math.round((current / tenure) * 100)) : 0;
+  const done = tenure > 0 && current >= tenure;
+  return { ...p, tenure, monthly, current, total, paid, remaining, pct, done };
 }
 
 export async function render(container) {
   if (!store.raw) await loadStore();
-  const plans = [...autoPlans(), ...manualPlans()].sort((a, b) => a.name.localeCompare(b.name));
 
-  const active = plans.filter((p) => p.current < p.tenure);
+  // Manual plans win over an auto plan for the same merchant+tenure+card, so a
+  // manually managed plan isn't double-counted against its auto twin.
+  const manual = manualPlans().map(withDerived);
+  const manualKeys = new Set(manual.map((p) => planKey(p.name, p.tenure, p.last4)));
+  const auto = autoPlans().map(withDerived)
+    .filter((p) => !manualKeys.has(planKey(p.name, p.tenure, p.last4)));
+
+  const all = [...manual, ...auto].sort((a, b) => a.name.localeCompare(b.name));
+  const active = all.filter((p) => !p.done);
+  const completed = all.filter((p) => p.done);
   const monthlyCommit = active.reduce((s, p) => s + p.monthly, 0);
-  const totalRemaining = plans.reduce((s, p) => s + planMetrics(p).remaining, 0);
+  const totalRemaining = active.reduce((s, p) => s + p.remaining, 0);
 
   container.innerHTML = `
     <div class="tab-head"><h1>Instalments</h1><button id="add-plan" class="ghost-btn">➕ Add plan</button></div>
@@ -59,7 +124,12 @@ export async function render(container) {
       <div class="stat-card"><div class="stat-lbl">Monthly commitment</div><div class="stat-val">${formatMYR(monthlyCommit)}</div></div>
       <div class="stat-card"><div class="stat-lbl">Total remaining</div><div class="stat-val">${formatMYR(totalRemaining)}</div></div>
     </div>
-    ${plans.length ? plans.map(planHtml).join("") : `<div class="empty">No instalment plans found</div>`}
+    ${active.length ? active.map(planHtml).join("") : `<div class="empty">No active instalment plans</div>`}
+    ${completed.length ? `
+      <details class="completed-block" ${completed.length <= 4 ? "open" : ""}>
+        <summary>Completed (${completed.length})</summary>
+        ${completed.map(planHtml).join("")}
+      </details>` : ""}
   `;
 
   document.getElementById("add-plan").addEventListener("click", () => openForm(null, container));
@@ -73,22 +143,23 @@ export async function render(container) {
 }
 
 function planHtml(p) {
-  const { total, paid, remaining, pct, done } = planMetrics(p);
   return `
     <div class="plan-card">
       <div class="plan-head">
-        <div><strong>${p.name}</strong> ${tagChip(p.tag)}</div>
+        <div><strong>${esc(p.name)}</strong> ${tagChip(p.tag)}</div>
         <span class="plan-src ${p.source}">${p.source === "auto" ? "auto" : "manual"}</span>
       </div>
       <div class="plan-meta">
-        ${p.last4 ? `••${p.last4} · ` : ""}${formatMYR(p.monthly)}/mo · ${done ? "completed" : `month ${p.current} of ${p.tenure}`}
+        ${p.last4 ? `••${p.last4} · ` : ""}${formatMYR(p.monthly)}/mo ·
+        ${p.done ? "completed" : `month ${p.current} of ${p.tenure}`}
+        ${p.start_month ? ` · from ${p.start_month}` : ""}
       </div>
-      <div class="plan-bar"><div class="plan-fill ${done ? "done" : ""}" style="width:${pct}%"></div></div>
+      <div class="plan-bar"><div class="plan-fill ${p.done ? "done" : ""}" style="width:${p.pct}%"></div></div>
       <div class="plan-figures">
-        <span><i>Paid</i> ${formatMYR(paid)}</span>
-        <span><i>Remaining</i> ${formatMYR(remaining)}</span>
-        <span><i>Total</i> ${formatMYR(total)}</span>
-        <span class="plan-pct">${pct}%</span>
+        <span><i>Paid</i> ${formatMYR(p.paid)}</span>
+        <span><i>Remaining</i> ${formatMYR(p.remaining)}</span>
+        <span><i>Total</i> ${formatMYR(p.total)}</span>
+        <span class="plan-pct">${p.pct}%</span>
       </div>
       ${p.source === "manual" ? `<div class="plan-actions">
         <button class="ghost-btn" data-edit="${p.id}">Edit</button>
@@ -99,7 +170,7 @@ function planHtml(p) {
 
 function openForm(plan, container) {
   const isEdit = !!plan;
-  const cards = [...new Set(store.rows.map((t) => t.card?.last4).filter(Boolean))];
+  const cards = [...new Set((store.rows || []).map((t) => t.card?.last4).filter(Boolean))];
   const node = document.createElement("div");
   node.className = "sheet-content";
   node.innerHTML = `
@@ -107,7 +178,8 @@ function openForm(plan, container) {
     <label>Name<input id="p-name" value="${esc(plan?.name)}"></label>
     <label>Monthly amount (RM)<input id="p-monthly" type="number" step="0.01" value="${plan?.monthly ?? ""}"></label>
     <label>Tenure (months)<input id="p-tenure" type="number" value="${plan?.tenure ?? ""}"></label>
-    <label>Current month<input id="p-current" type="number" value="${plan?.current ?? 0}"></label>
+    <label>Start month<input id="p-start" type="month" value="${esc(plan?.start_month)}"></label>
+    <div class="field-hint">The remaining balance and completion are calculated from the start month automatically.</div>
     <label>Tag<select id="p-tag">
       <option value="Instalment" ${plan?.tag === "Instalment" ? "selected" : ""}>Instalment</option>
       <option value="Balance Transfer" ${plan?.tag === "Balance Transfer" ? "selected" : ""}>Balance Transfer</option>
@@ -131,13 +203,17 @@ async function savePlan(plan, node, container) {
     name: v("#p-name"),
     monthly: Number(v("#p-monthly")),
     tenure: Number(v("#p-tenure")),
-    current: Number(v("#p-current")) || 0,
+    start_month: v("#p-start") || null,
     tag: v("#p-tag"),
     last4: v("#p-card") || null,
     note: v("#p-note"),
   };
   if (!payload.name || !payload.monthly || !payload.tenure) {
     showToast("Name, monthly amount and tenure are required", "error");
+    return;
+  }
+  if (!payload.start_month) {
+    showToast("Start month is required so the remaining can be calculated", "error");
     return;
   }
   const btn = node.querySelector("#p-save");
