@@ -236,9 +236,13 @@ export function deriveCards(data) {
     }
   }
 
-  // Per-card spend (sum of that card's debits) and qualifying swipe count for
-  // the annual-fee waiver. Consolidated statements carry one shared due/limit on
-  // the primary card, so per-card spend is the only meaningful figure for supps.
+  // Per-card spend for the CURRENT cycle (the newest statement the card appears
+  // in — its cycle_statement_id) and qualifying swipe count for the annual-fee
+  // waiver. "Spent" is the computed twin of the bank-printed period_subtotal:
+  // one statement's debits, NOT an all-time running total across every cycle.
+  // Consolidated statements carry one shared due/limit on the primary card, so
+  // this per-card figure is the only meaningful spend for supps. Manual-only
+  // cards have no statement cycle, so they fall back to summing all their debits.
   const spendByKey = {};
   const sweepByKey = {};
   for (const stmt of data.statements || []) {
@@ -248,7 +252,10 @@ export function deriveCards(data) {
       const amt = Number(t.amount) || 0;
       if (amt >= 0) continue; // debits only
       const key = `${t.bank_id || stmt.bank_id}:${l4}`;
-      spendByKey[key] = (spendByKey[key] || 0) + Math.abs(amt);
+      const card = byKey.get(key);
+      if (!card || !card.cycle_statement_id || stmt.statement_id === card.cycle_statement_id) {
+        spendByKey[key] = (spendByKey[key] || 0) + Math.abs(amt);
+      }
 
       // A "swipe" = a debit inside the card's current anniversary window that
       // clears any minimum-per-transaction the bank requires.
