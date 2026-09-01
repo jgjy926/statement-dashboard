@@ -199,6 +199,52 @@ textarea { min-height: 64px; resize: vertical; }
 .paid-toggle:active { background: rgba(255,255,255,0.22); }
 .credit-card { position: relative; }
 
+/* ---- missing-statement banner (on the dark card) ---- */
+.cc-missing {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 7px 9px; border-radius: 8px;
+  border-left: 3px solid #ffca28; line-height: 1.25;
+}
+.cc-missing.awaiting { border-left-color: #ffca28; background: rgba(249,168,37,0.22); }
+.cc-missing.overdue  { border-left-color: #ff6b6b; background: rgba(217,48,37,0.28); }
+.cc-missing.dormant  { border-left-color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.08); }
+.cc-missing.cleared  { border-left-color: #66bb6a; background: rgba(102,187,106,0.18); }
+.ccm-ico { font-size: 0.95rem; flex-shrink: 0; }
+.cc-missing.cleared .ccm-ico { color: #a5d6a7; }
+.ccm-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ccm-txt b { font-weight: 600; font-size: 0.72rem; }
+.ccm-txt i { font-style: normal; opacity: 0.78; font-size: 0.65rem; }
+.ccm-nil, .ccm-undo {
+  flex-shrink: 0; border: 1px solid rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.14); color: #fff; border-radius: 999px;
+  padding: 4px 10px; font: inherit; font-size: 0.7rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.ccm-nil:active, .ccm-undo:active { background: rgba(255,255,255,0.28); }
+.credit-card.flash { animation: cardFlash 1.6s ease; }
+@keyframes cardFlash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,202,40,0); }
+  25%, 60% { box-shadow: 0 0 0 3px rgba(255,202,40,0.95); }
+}
+
+/* ---- "statements awaiting" summary (on the light surface) ---- */
+.attn-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  text-align: left; border: 1px solid var(--outline); border-left-width: 3px;
+  background: var(--surface); border-radius: 10px; padding: 10px 12px;
+  margin-top: 8px; font: inherit; cursor: pointer;
+}
+.attn-row:first-of-type { margin-top: 0; }
+.attn-row:active { background: #f1f3f4; }
+.attn-row.awaiting { border-left-color: #f9a825; background: color-mix(in srgb, #f9a825 8%, white); }
+.attn-row.overdue  { border-left-color: var(--neg); background: color-mix(in srgb, var(--neg) 7%, white); }
+.attn-row.dormant  { border-left-color: #9aa0a6; }
+.attn-ico { font-size: 1.05rem; flex-shrink: 0; }
+.attn-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.attn-card { font-size: 0.82rem; font-weight: 600; }
+.attn-detail { font-size: 0.74rem; color: var(--muted); }
+.attn-go { color: var(--muted); font-size: 1.15rem; flex-shrink: 0; }
+
 /* ---- merchant rules ---- */
 .count-pill { font-size: 0.72rem; background: var(--primary); color: #fff; border-radius: 999px; padding: 1px 9px; vertical-align: middle; margin-left: 6px; }
 .block-label { display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; color: var(--muted); }

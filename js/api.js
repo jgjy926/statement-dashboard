@@ -91,6 +91,11 @@ export function setCardPaid(data) {
   return request("/card/paid", { method: "POST", body: data });
 }
 
+// data = { bank_id, last4, cycles: ["YYYY-MM"], nil: true|false }
+export function setCardNil(data) {
+  return request("/card/nil", { method: "POST", body: data });
+}
+
 export function saveMerchantRule(data) {
   return request("/merchant/rule", { method: "POST", body: data });
 }
@@ -146,11 +151,101 @@ export function anniversaryWindow(anniversaryMonth, now = new Date()) {
   return { startIso, endIso, monthsLeft: Math.max(0, monthsLeft) };
 }
 
+/* -------------------------------------------------- missing statements */
+
+// Add `n` whole months to an ISO date, clamping the day to the target month's
+// length (so a 31st never spills into the next month). Returns a Date.
+function addMonthsIso(iso, n) {
+  const base = new Date(`${iso.slice(0, 10)}T00:00:00`);
+  const day = base.getDate();
+  const d = new Date(base.getFullYear(), base.getMonth() + n, 1);
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, daysInMonth));
+  return d;
+}
+
+const toIso = (d) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+function median(nums) {
+  if (!nums.length) return null;
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// Statements are monthly, so from a card's newest statement we can project the
+// cycles that *should* have arrived by now. Any projected statement date on or
+// before today with no matching statement is "missing" (awaited) — unless the
+// user has flagged that billing month as no-spend (`nilSet`, a Set of "YYYY-MM"),
+// in which case it is settled, not awaited. We infer the month step from the
+// median gap between statements and the due-date offset from the median
+// (statement → due) span, so each bank's own cadence drives the prediction.
+// `entries` = [{ sd, dd }] ISO strings for one card, any order.
+//
+// Returns null when up to date, else:
+//   { status: "awaiting" | "overdue" | "dormant" | "cleared",
+//     missing: [{ statement_date, due_date, ym }],  // oldest first, awaited
+//     nil:     [{ statement_date, due_date, ym }],  // in-range, no-spend
+//     last_statement_date }
+// "overdue" = the oldest missing cycle's due date has already passed;
+// "dormant" = 3+ cycles awaited (card likely closed) → muted, not urgent;
+// "cleared" = nothing awaited but recent cycles were marked no-spend.
+export function projectMissingStatements(entries, nilSet = new Set(), now = new Date()) {
+  const dated = entries
+    .filter((e) => e.sd)
+    .map((e) => ({ sd: e.sd.slice(0, 10), dd: e.dd ? e.dd.slice(0, 10) : null }))
+    .sort((a, b) => a.sd.localeCompare(b.sd));
+  if (!dated.length) return null;
+
+  const gaps = [];
+  for (let i = 1; i < dated.length; i++) {
+    const days = (new Date(dated[i].sd) - new Date(dated[i - 1].sd)) / 86400000;
+    if (days > 0) gaps.push(days);
+  }
+  const stepMonths = Math.max(1, Math.round((median(gaps) ?? 30.44) / 30.44));
+
+  const offsets = dated
+    .filter((e) => e.dd && e.dd > e.sd)
+    .map((e) => (new Date(e.dd) - new Date(e.sd)) / 86400000);
+  const dueOffsetDays = Math.round(median(offsets) ?? 20);
+
+  const todayIso = toIso(now);
+  const lastSd = dated[dated.length - 1].sd;
+  const missing = [];
+  const nil = [];
+  let guard = 0;
+  let next = addMonthsIso(lastSd, stepMonths);
+  while (toIso(next) <= todayIso && guard < 24) {
+    const sdIso = toIso(next);
+    const ym = sdIso.slice(0, 7);
+    const due = new Date(next);
+    due.setDate(due.getDate() + dueOffsetDays);
+    const dueIso = toIso(due);
+    const cycle = { statement_date: sdIso, due_date: dueIso, ym, overdue: dueIso < todayIso };
+    (nilSet.has(ym) ? nil : missing).push(cycle);
+    next = addMonthsIso(sdIso, stepMonths);
+    guard++;
+  }
+  if (!missing.length && !nil.length) return null;
+
+  let status;
+  if (!missing.length) status = "cleared";
+  else if (missing.length >= 3) status = "dormant";
+  else status = missing[0].due_date < todayIso ? "overdue" : "awaiting";
+  return { status, missing, nil, last_statement_date: lastSd };
+}
+
 // One card per (bank_id, last4), enriched with the latest statement's balances.
 // Cards come from statements[].cards[] plus the statement's headline card.
 export function deriveCards(data) {
   const byKey = new Map();
   const paidStatus = data.paid_status || {};
+  const nilStatements = data.nil_statements || {};
+  // Per-card statement/due dates, for projecting which cycles are still awaited.
+  const stmtDatesByKey = new Map();
 
   const statements = [...(data.statements || [])].sort((a, b) =>
     (a.statement_date || "").localeCompare(b.statement_date || "")
@@ -175,6 +270,11 @@ export function deriveCards(data) {
       if (!c.last4) continue;
       const key = `${stmt.bank_id}:${c.last4}`;
       const isPrimary = c.last4 === fallbackPrimary;
+      // Track this card's statement cadence for missing-cycle projection.
+      (stmtDatesByKey.get(key) || stmtDatesByKey.set(key, []).get(key)).push({
+        sd: stmt.statement_date,
+        dd: stmt.due_date,
+      });
       // Later (newer) statements overwrite, so the freshest balances win.
       const prev = byKey.get(key) || {};
       byKey.set(key, {
@@ -282,6 +382,21 @@ export function deriveCards(data) {
       c.sweeps = sweepByKey[key] || 0;
       c.sweeps_pending = Math.max(0, c.required_swipes - c.sweeps);
       c.months_left = windowByKey[key] ? windowByKey[key].monthsLeft : null;
+    }
+    // Which statement cycles this card is still awaiting. Supplementary cards
+    // ride the primary's consolidated bill, so only flag the primary to avoid
+    // duplicate warnings within a bank; manual-only cards have no cadence.
+    if (!c.is_supplementary && !c.manual_only) {
+      const prefix = `${c.bank_id}:${c.last4}:`;
+      const nilSet = new Set(
+        Object.keys(nilStatements)
+          .filter((k) => k.startsWith(prefix))
+          .map((k) => k.slice(prefix.length))
+      );
+      c.stmt_watch = projectMissingStatements(
+        stmtDatesByKey.get(`${c.bank_id}:${c.last4}`) || [],
+        nilSet
+      );
     }
   }
   return cards;
