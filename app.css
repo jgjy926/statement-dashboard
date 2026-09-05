@@ -277,7 +277,7 @@ textarea { min-height: 64px; resize: vertical; }
 .plan-src.auto { background: #e8eaf6; color: #3949ab; }
 .plan-src.manual { background: #e0f2f1; color: #00897b; }
 .plan-meta { color: var(--muted); font-size: 0.78rem; margin: 6px 0 8px; }
-.plan-covers { display: block; margin-top: 3px; font-size: 0.72rem; opacity: 0.8; }
+.plan-note { display: block; margin-top: 3px; font-size: 0.72rem; opacity: 0.8; }
 .plan-bar { height: 8px; background: var(--outline); border-radius: 999px; overflow: hidden; }
 .plan-fill { height: 100%; background: var(--tag-instalment); }
 .plan-fill.done { background: var(--pos); }

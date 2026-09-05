@@ -58,19 +58,21 @@ function planKey(name, tenure, last4, monthly) {
 const START_SLACK_MONTHS = 1;
 
 // True when a manually captured plan and an auto-detected one are the SAME
-// commitment, so the auto twin can be dropped instead of listed a second time.
+// commitment. The AUTO plan then wins and the manual placeholder drops out:
+// the auto plan is read off the statement itself, so its amount, card and
+// counter are the bank's own figures, while the manual row was only a
+// stand-in the user typed before that statement existed.
 //
-// Name equality alone is not enough: the user types their own label ("RHB 12
-// Mnh") and never the bank's raw description ("SMART MOVE BAL TRANSFER"), and
-// usually leaves the card blank. So a plan captured by hand BEFORE the
-// statement carrying its ":NNN/NNN" counter was parsed reappeared as a second
-// card the moment that statement landed - and was counted twice in the monthly
-// commitment and remaining totals.
+// Name equality alone can never spot the pair: the user types their own label
+// ("RHB 12 Mnh"), never the bank's raw description ("SMART MOVE BAL
+// TRANSFER"), and usually leaves the card blank. So the plan showed up twice -
+// and was counted twice in the monthly commitment and remaining totals - the
+// moment the statement carrying its ":NNN/NNN" counter was parsed.
 //
-// Falling back to shape (same tenure, same monthly, same window, compatible
-// card) is what actually identifies the plan. The start month is the
-// discriminator that keeps genuinely different plans apart: a manual 133/6
-// starting 2026-07 must NOT swallow an auto 133/6 that started 2025-11.
+// Shape (same tenure, same monthly, same window, compatible card) is what
+// actually identifies the pair. The start month is the discriminator that
+// keeps genuinely different plans apart: a manual 133/6 starting 2026-07 must
+// NOT be swallowed by an auto 133/6 that started 2025-11.
 function coversAuto(manual, auto) {
   if (planKey(manual.name, manual.tenure, manual.last4, manual.monthly)
       === planKey(auto.name, auto.tenure, auto.last4, auto.monthly)) return true;
@@ -139,17 +141,23 @@ function withDerived(p) {
 export async function render(container) {
   if (!store.raw) await loadStore();
 
-  // A manual plan wins over the auto plan it covers (see coversAuto), so a
-  // hand-captured plan isn't double-counted against its auto twin.
-  const manual = manualPlans().map(withDerived);
-  const detected = autoPlans().map(withDerived);
-  const auto = detected.filter((a) => !manual.some((m) => coversAuto(m, a)));
-  // Show what each manual plan absorbed, so a fold-in reads as "same plan,
-  // your name for it" rather than the statement's plan having gone missing.
-  for (const m of manual) {
-    m.covers = detected.filter(
-      (a) => coversAuto(m, a) && a.name.toLowerCase() !== (m.name || "").toLowerCase());
-  }
+  // The statement is the source of truth: once a parsed row carries the plan's
+  // ":NNN/NNN" counter, the auto plan wins and the placeholder the user
+  // captured by hand before that statement arrived drops out of the list and
+  // the totals (see coversAuto).
+  const auto = autoPlans().map(withDerived);
+  const supersededBy = new Map(); // auto plan id -> manual plans it replaced
+  const manual = manualPlans().map(withDerived).filter((m) => {
+    const twin = auto.find((a) => coversAuto(m, a));
+    if (!twin) return true;
+    supersededBy.set(twin.id, [...(supersededBy.get(twin.id) || []), m]);
+    return false;
+  });
+  // Name the replaced plan on the surviving card. The manual record still
+  // exists on the server, so the card also carries its delete action -
+  // otherwise a superseded plan would be stranded: never listed, never
+  // editable, never removable.
+  for (const a of auto) a.supersedes = supersededBy.get(a.id) || [];
 
   const all = [...manual, ...auto].sort((a, b) => a.name.localeCompare(b.name));
   const active = all.filter((p) => !p.done);
@@ -193,7 +201,7 @@ function planHtml(p) {
         ${p.last4 ? `••${p.last4} · ` : ""}${formatMYR(p.monthly)}/mo ·
         ${p.done ? "completed" : `month ${p.current} of ${p.tenure}`}
         ${p.start_month ? ` · from ${p.start_month}` : ""}
-        ${p.covers?.length ? `<span class="plan-covers">covers ${p.covers.map((c) => esc(c.name)).join(", ")}</span>` : ""}
+        ${p.supersedes?.length ? `<span class="plan-note">replaces your manual ${p.supersedes.map((m) => `"${esc(m.name)}"`).join(", ")}</span>` : ""}
       </div>
       <div class="plan-bar"><div class="plan-fill ${p.done ? "done" : ""}" style="width:${p.pct}%"></div></div>
       <div class="plan-figures">
@@ -205,6 +213,8 @@ function planHtml(p) {
       ${p.source === "manual" ? `<div class="plan-actions">
         <button class="ghost-btn" data-edit="${p.id}">Edit</button>
         <button class="ghost-btn danger" data-del="${p.id}">Delete</button>
+      </div>` : p.supersedes?.length ? `<div class="plan-actions">
+        ${p.supersedes.map((m) => `<button class="ghost-btn danger" data-del="${m.id}">Delete manual "${esc(m.name)}"</button>`).join("")}
       </div>` : ""}
     </div>`;
 }
