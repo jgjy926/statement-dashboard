@@ -52,6 +52,37 @@ function planKey(name, tenure, last4, monthly) {
   return `${(name || "").toLowerCase().trim()}|${tenure}|${last4 || ""}|${amt}`;
 }
 
+// How far apart the two sides' inferred start months may sit and still be the
+// same plan. The auto start is derived from a statement's posting date, so it
+// can land a month either side of the month the user typed.
+const START_SLACK_MONTHS = 1;
+
+// True when a manually captured plan and an auto-detected one are the SAME
+// commitment, so the auto twin can be dropped instead of listed a second time.
+//
+// Name equality alone is not enough: the user types their own label ("RHB 12
+// Mnh") and never the bank's raw description ("SMART MOVE BAL TRANSFER"), and
+// usually leaves the card blank. So a plan captured by hand BEFORE the
+// statement carrying its ":NNN/NNN" counter was parsed reappeared as a second
+// card the moment that statement landed - and was counted twice in the monthly
+// commitment and remaining totals.
+//
+// Falling back to shape (same tenure, same monthly, same window, compatible
+// card) is what actually identifies the plan. The start month is the
+// discriminator that keeps genuinely different plans apart: a manual 133/6
+// starting 2026-07 must NOT swallow an auto 133/6 that started 2025-11.
+function coversAuto(manual, auto) {
+  if (planKey(manual.name, manual.tenure, manual.last4, manual.monthly)
+      === planKey(auto.name, auto.tenure, auto.last4, auto.monthly)) return true;
+  if (Number(manual.tenure) !== Number(auto.tenure)) return false;
+  if (Math.abs((Number(manual.monthly) || 0) - (Number(auto.monthly) || 0)) > 1) return false;
+  // A manual plan naming a card must match it; one left blank covers any card.
+  if (manual.last4 && manual.last4 !== auto.last4) return false;
+  // Legacy manual plans with no start_month can only be matched by name above.
+  if (!manual.start_month || !auto.start_month) return false;
+  return Math.abs(monthsBetween(manual.start_month, auto.start_month)) <= START_SLACK_MONTHS;
+}
+
 // Group Instalment/BT transactions that carry a ":NNN/NNN" counter into plans.
 function autoPlans() {
   const groups = new Map();
@@ -108,12 +139,17 @@ function withDerived(p) {
 export async function render(container) {
   if (!store.raw) await loadStore();
 
-  // Manual plans win over an auto plan for the same merchant+tenure+card, so a
-  // manually managed plan isn't double-counted against its auto twin.
+  // A manual plan wins over the auto plan it covers (see coversAuto), so a
+  // hand-captured plan isn't double-counted against its auto twin.
   const manual = manualPlans().map(withDerived);
-  const manualKeys = new Set(manual.map((p) => planKey(p.name, p.tenure, p.last4, p.monthly)));
-  const auto = autoPlans().map(withDerived)
-    .filter((p) => !manualKeys.has(planKey(p.name, p.tenure, p.last4, p.monthly)));
+  const detected = autoPlans().map(withDerived);
+  const auto = detected.filter((a) => !manual.some((m) => coversAuto(m, a)));
+  // Show what each manual plan absorbed, so a fold-in reads as "same plan,
+  // your name for it" rather than the statement's plan having gone missing.
+  for (const m of manual) {
+    m.covers = detected.filter(
+      (a) => coversAuto(m, a) && a.name.toLowerCase() !== (m.name || "").toLowerCase());
+  }
 
   const all = [...manual, ...auto].sort((a, b) => a.name.localeCompare(b.name));
   const active = all.filter((p) => !p.done);
@@ -157,6 +193,7 @@ function planHtml(p) {
         ${p.last4 ? `••${p.last4} · ` : ""}${formatMYR(p.monthly)}/mo ·
         ${p.done ? "completed" : `month ${p.current} of ${p.tenure}`}
         ${p.start_month ? ` · from ${p.start_month}` : ""}
+        ${p.covers?.length ? `<span class="plan-covers">covers ${p.covers.map((c) => esc(c.name)).join(", ")}</span>` : ""}
       </div>
       <div class="plan-bar"><div class="plan-fill ${p.done ? "done" : ""}" style="width:${p.pct}%"></div></div>
       <div class="plan-figures">
