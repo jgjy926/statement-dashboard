@@ -74,6 +74,14 @@ h2 { font-size: 1rem; font-weight: 600; margin: 0 0 10px; }
 .nav-btn .nav-ico { font-size: 1.25rem; line-height: 1; }
 .nav-btn.active { color: var(--primary); font-weight: 600; }
 .nav-btn.active .nav-ico { transform: translateY(-1px); }
+.nav-ico { position: relative; }
+.nav-ico[data-badge]:not([data-badge=""])::after {
+  content: attr(data-badge);
+  position: absolute; top: -5px; right: -10px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--neg); color: #fff; font-size: 0.62rem; font-weight: 700;
+  line-height: 16px; text-align: center; font-style: normal;
+}
 
 /* ---- panels & cards ---- */
 .panel {
@@ -245,6 +253,29 @@ textarea { min-height: 64px; resize: vertical; }
 .attn-detail { font-size: 0.74rem; color: var(--muted); }
 .attn-go { color: var(--muted); font-size: 1.15rem; flex-shrink: 0; }
 
+/* ---- activity: parse log ---- */
+.act-clear { color: var(--pos); font-size: 0.88rem; padding: 4px 2px; }
+.act-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.act-filters .seg { flex-wrap: wrap; }
+.act-filters select { flex: 1; min-width: 140px; }
+.act-row { border: 1px solid var(--outline); border-radius: 10px; margin-top: 8px; background: var(--surface); }
+.act-row > summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; }
+.act-row > summary::-webkit-details-marker { display: none; }
+.act-pill { flex-shrink: 0; font-size: 0.7rem; font-weight: 700; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.act-pill.passed { background: color-mix(in srgb, var(--pos) 14%, white); color: var(--pos); }
+.act-pill.failed { background: color-mix(in srgb, var(--neg) 12%, white); color: var(--neg); }
+.act-pill.duplicate { background: #eceff1; color: var(--muted); }
+.act-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.act-title { font-size: 0.84rem; font-weight: 600; overflow-wrap: anywhere; }
+.act-sub { font-size: 0.74rem; color: var(--muted); overflow-wrap: anywhere; }
+.act-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.act-when { font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
+.act-warn { font-size: 0.7rem; color: #b06000; white-space: nowrap; }
+.act-detail { padding: 0 12px 10px; font-size: 0.76rem; color: var(--muted); }
+.act-err { color: var(--neg); margin-bottom: 6px; overflow-wrap: anywhere; }
+.act-warnings { margin: 0 0 6px; padding-left: 18px; }
+.act-file { overflow-wrap: anywhere; opacity: 0.85; }
+
 /* ---- merchant rules ---- */
 .count-pill { font-size: 0.72rem; background: var(--primary); color: #fff; border-radius: 999px; padding: 1px 9px; vertical-align: middle; margin-left: 6px; }
 .block-label { display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; color: var(--muted); }
@@ -287,6 +318,11 @@ textarea { min-height: 64px; resize: vertical; }
 .plan-actions { display: flex; gap: 8px; margin-top: 12px; }
 .plan-actions .danger { color: var(--neg); border-color: #f3c2c0; }
 .completed-block { margin-top: 18px; }
+.untracked { margin-top: 18px; }
+.untracked .field-hint { margin-bottom: 8px; }
+.untracked-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--outline); }
+.untracked-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.untracked-row .ghost-btn { flex-shrink: 0; }
 .completed-block > summary { cursor: pointer; font-weight: 700; color: var(--muted, #667); padding: 8px 2px; }
 .completed-block[open] > summary { margin-bottom: 8px; }
 .field-hint { font-size: 0.72rem; color: var(--muted, #667); margin: -6px 2px 10px; }

@@ -4,6 +4,7 @@ import { fetchData, fetchConfig, flattenTransactions } from "./api.js";
 import * as overview from "./overview.js";
 import * as transactions from "./transactions.js";
 import * as cards from "./cards.js";
+import * as activity from "./activity.js";
 import * as entry from "./entry.js";
 import * as merchants from "./merchants.js";
 import * as cashback from "./cashback.js";
@@ -73,7 +74,16 @@ export async function loadStore() {
   store.raw = raw;
   store.rows = flattenTransactions(raw);
   store.config = config;
+  updateActivityBadge();
   return store;
+}
+
+// Count of awaiting statements + unresolved parse failures on the Activity tab.
+function updateActivityBadge() {
+  const ico = document.querySelector('.nav-btn[data-tab="activity"] .nav-ico');
+  if (!ico) return;
+  const n = activity.attentionCount(store.raw);
+  ico.dataset.badge = n ? String(n) : "";
 }
 
 /* ----------------------------------------------- shared components */
@@ -112,6 +122,7 @@ export function closeSheet() {
 const TABS = {
   overview: { mod: overview, label: "Overview" },
   cards: { mod: cards, label: "Cards" },
+  activity: { mod: activity, label: "Activity" },
   transactions: { mod: transactions, label: "Transactions" },
   add: { mod: entry, label: "Add" },
   merchants: { mod: merchants, label: "Merchants" },
@@ -178,7 +189,7 @@ function init() {
   // Build nav.
   const nav = document.getElementById("nav");
   const icons = {
-    overview: "📊", cards: "💳", transactions: "📋", add: "➕",
+    overview: "📊", cards: "💳", activity: "🔔", transactions: "📋", add: "➕",
     merchants: "🏷️", cashback: "💰", instalments: "📅", settings: "⚙️",
   };
   nav.innerHTML = Object.entries(TABS)

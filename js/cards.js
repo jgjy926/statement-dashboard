@@ -14,7 +14,7 @@ function netBadge(network) {
   return `<span class="net ${n.cls}">${n.label}</span>`;
 }
 
-function monthYear(iso) {
+export function monthYear(iso) {
   const d = new Date(`${(iso || "").slice(0, 10)}T00:00:00`);
   if (isNaN(d)) return iso || "—";
   return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
@@ -31,7 +31,7 @@ function monthShort(iso) {
 // NEWEST awaited cycle (the "current" statement the Nil button clears); older
 // unbilled cycles are summarised as "+N earlier". `target` is the cycle the
 // Nil action acts on. Shared by the per-card banner and the top summary.
-function watchParts(w) {
+export function watchParts(w) {
   const m = w.missing;
   const newest = m[m.length - 1];
   const earlier = m.length - 1;
@@ -123,42 +123,11 @@ function cardHtml(c) {
     </div>`;
 }
 
-// Top-of-tab roundup of every card awaiting a statement, most urgent first, so
-// the gap is visible without scrolling each bank panel.
-const WATCH_ORDER = { overdue: 0, awaiting: 1, dormant: 2 };
-
-function attentionPanel(cards) {
-  const watched = cards
-    .filter((c) => c.stmt_watch && c.stmt_watch.missing.length) // exclude cleared-only
-    .sort((a, b) => {
-      const o = WATCH_ORDER[a.stmt_watch.status] - WATCH_ORDER[b.stmt_watch.status];
-      if (o) return o;
-      return (a.stmt_watch.missing[0].due_date || "").localeCompare(
-        b.stmt_watch.missing[0].due_date || ""
-      );
-    });
-  if (!watched.length) return "";
-
-  const rows = watched.map((c) => {
-    const p = watchParts(c.stmt_watch);
-    const bank = store.config?.banks?.[c.bank_id]?.bank_name || c.bank_id;
-    return `<button class="attn-row ${c.stmt_watch.status}" data-target="card-${c.bank_id}-${c.last4}">
-      <span class="attn-ico">${p.icon}</span>
-      <span class="attn-main">
-        <span class="attn-card">${bank} •••• ${c.last4}</span>
-        <span class="attn-detail">${p.headline} · ${p.sub}</span>
-      </span>
-      <span class="attn-go">›</span>
-    </button>`;
-  }).join("");
-
-  return `<div class="panel attn-panel">
-    <div class="panel-head">
-      <h2>Statements awaiting</h2>
-      <span class="count-pill">${watched.length}</span>
-    </div>
-    ${rows}
-  </div>`;
+// The Activity tab links each awaiting card here: it sets the card to focus,
+// then navigates to #cards, and render() scrolls to and flashes it.
+let pendingFocus = null;
+export function focusCard(bankId, last4) {
+  pendingFocus = `card-${bankId}-${last4}`;
 }
 
 export async function render(container) {
@@ -170,7 +139,6 @@ export async function render(container) {
 
   container.innerHTML = `
     <div class="tab-head"><h1>Cards</h1></div>
-    ${attentionPanel(cards)}
     ${Object.keys(byBank).length ? Object.entries(byBank).map(([bank, list]) => `
       <div class="panel">
         <h2>${(store.config?.banks?.[bank]?.bank_name) || bank}</h2>
@@ -178,16 +146,16 @@ export async function render(container) {
       </div>`).join("") : `<div class="empty">No cards found</div>`}
   `;
 
-  // Summary row → scroll to (and briefly flash) the matching card.
-  container.querySelectorAll(".attn-row").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const el = container.querySelector(`#${CSS.escape(btn.dataset.target)}`);
-      if (!el) return;
+  // Arrived from an Activity row → scroll to (and briefly flash) that card.
+  if (pendingFocus) {
+    const el = container.querySelector(`#${CSS.escape(pendingFocus)}`);
+    pendingFocus = null;
+    if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("flash");
       setTimeout(() => el.classList.remove("flash"), 1600);
-    })
-  );
+    }
+  }
 
   // Tap a card → open Transactions pre-filtered to that card.
   container.querySelectorAll(".credit-card").forEach((el) =>
