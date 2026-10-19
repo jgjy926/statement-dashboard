@@ -9,6 +9,7 @@ import * as merchants from "./merchants.js";
 import * as cashback from "./cashback.js";
 import * as instalments from "./instalments.js";
 import * as settings from "./settings.js";
+import { initMobile } from "./mobile.js";
 
 /* ----------------------------------------------- §2 shared conventions */
 
@@ -189,6 +190,7 @@ function init() {
   document.getElementById("sheet-overlay").addEventListener("click", closeSheet);
   window.addEventListener("hashchange", renderRoute);
   wirePullToRefresh();
+  initMobile(() => { store.raw = null; renderRoute(); });
   renderRoute();
 }
 

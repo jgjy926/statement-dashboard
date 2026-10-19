@@ -1,0 +1,20 @@
+{
+  "appId": "io.github.jgjy926.statementdashboard",
+  "appName": "Statement Dashboard",
+  "webDir": "www",
+  "backgroundColor": "#f5f6f8",
+  "zoomEnabled": true,
+  "server": {
+    "androidScheme": "https",
+    "hostname": "jgjy926.github.io"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "LIGHT"
+    }
+  }
+}

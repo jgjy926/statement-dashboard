@@ -4,3 +4,7 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# Android app (mobile/): builds and generated bundle
+*.apk
+*.aab

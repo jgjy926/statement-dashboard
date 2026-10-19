@@ -1,0 +1,272 @@
+"""Generate every Statement Dashboard app icon from ONE geometry definition.
+
+Writes (paths relative to the dashboard folder):
+  mobile/android/.../res/drawable/ic_launcher_background.xml   vector, brand-blue gradient
+  mobile/android/.../res/drawable/ic_launcher_foreground.xml   vector, statement + card
+  mobile/android/.../res/drawable/ic_launcher_monochrome.xml   Android 13+ themed icon
+  mobile/android/.../res/mipmap-anydpi-v26/ic_launcher(_round).xml
+  mobile/android/.../res/mipmap-*/ic_launcher(_round).png      Android 7 fallbacks
+  mobile/android/.../res/drawable*/splash.png                  light branded splash
+
+Run from anywhere:  python mobile/scripts/make-icons.py   (needs Pillow)
+Then rebuild the APK. Same pipeline as cashback_sspn's make-icons.py, different art.
+
+The design lives in a 108x108 adaptive-icon canvas. Everything is scaled about the
+centre so it stays inside the 66dp circular safe zone (no launcher mask clips it).
+"""
+import os
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+RES = os.path.join(ROOT, 'mobile', 'android', 'app', 'src', 'main', 'res')
+APP_BG = '#F5F6F8'                                   # page background (app.css / colors.xml)
+PRIMARY = '#1A73E8'                                  # --primary in app.css
+GRAD = [('#0B3A8C', 0.0), ('#1A73E8', 0.58), ('#4DA3FF', 1.0)]  # deep navy -> brand -> sky
+S, C = 0.86, 54.0                                    # composition scale about the centre
+# The art's bounding box (sheet x28..66 + card ..86, y22..83) centres on (57, 52.5);
+# offset so it sits optically centred on the 54,54 canvas.
+OX, OY = 57.0, 52.5
+
+
+def t(v, axis='x'):  # canvas coordinate -> scaled, centred coordinate
+    return C + (v - (OX if axis == 'x' else OY)) * S
+
+
+# ---- design (unscaled 108-unit canvas) -------------------------------------------
+# kind, geometry, fill, (monochrome group, role) — role 'solid' fills, 'hole' cuts out
+PAPER = [
+    ('rrect', (30.5, 24.5, 38, 54, 4.5), '#061E4D66', None),        # sheet drop shadow
+    ('rrect', (28, 22, 38, 54, 4.5), '#FFFFFF', 'solid'),            # statement sheet
+    ('rrect', (28, 22, 38, 9, 4.5), '#E8F0FE', None),                # header tint (rounded top)
+    ('rect', (28, 27.5, 38, 3.5), '#E8F0FE', None),                  # header tint (square bottom)
+    ('rrect', (33, 25, 15, 3.6, 1.8), PRIMARY, 'hole'),              # bank / title bar
+    ('circle', (59.5, 26.8, 2.4), PRIMARY, 'hole'),                  # bank logo dot
+    ('rrect', (33, 35, 11, 2.4, 1.2), '#AEB8C8', 'hole'),            # "statement date"
+] + [
+    s for y in (41.5, 47.5, 53.5) for s in (
+        ('rrect', (33, y, 16, 2.6, 1.3), '#D3DAE6', 'hole'),         # description column
+        ('rrect', (52, y, 9, 2.6, 1.3), '#8AB4F8', 'hole'),          # amount column
+    )
+] + [
+    ('rect', (33, 58.6, 28, 0.9), '#E3E8F0', None),                  # divider
+    ('rrect', (33, 61.5, 9, 3.2, 1.6), '#0F2A5C', 'hole'),           # "TOTAL"
+    ('rrect', (48, 61.2, 13, 3.8, 1.9), PRIMARY, 'hole'),            # total amount
+]
+CARD = [
+    ('rrect', (56, 64.4, 30, 19, 3.2), '#061E4D73', None),           # card drop shadow
+    ('rrect', (54, 62, 30, 19, 3.2), '#F6B73C', 'solid'),            # card body (gold)
+    ('rrect', (54, 62, 30, 9.5, 3.2), '#FFCB5C', None),              # top sheen (rounded top)
+    ('rect', (54, 66, 30, 5.5), '#FFCB5C', None),                    # top sheen (square bottom)
+    ('rect', (54, 66.6, 30, 3.6), '#0F2A5C', 'hole'),                # magnetic stripe
+    ('rrect', (58, 73, 6, 4.6, 1.1), '#FFF1C7', 'hole'),             # chip
+    ('rrect', (68, 74.4, 12, 2.0, 1.0), '#B9852A', None),            # card number
+]
+SHAPES = [(k, g, c, ('paper', r)) for k, g, c, r in PAPER] + \
+         [(k, g, c, ('card', r)) for k, g, c, r in CARD]
+
+
+# ---- vector drawables --------------------------------------------------------------
+def f(v):
+    return f'{v:.2f}'.rstrip('0').rstrip('.')
+
+
+def rrect_path(x, y, w, h, r):
+    x, y, w, h, r = t(x), t(y, 'y'), w * S, h * S, r * S
+    return (f'M{f(x + r)},{f(y)}H{f(x + w - r)}A{f(r)},{f(r)} 0 0 1 {f(x + w)},{f(y + r)}'
+            f'V{f(y + h - r)}A{f(r)},{f(r)} 0 0 1 {f(x + w - r)},{f(y + h)}'
+            f'H{f(x + r)}A{f(r)},{f(r)} 0 0 1 {f(x)},{f(y + h - r)}'
+            f'V{f(y + r)}A{f(r)},{f(r)} 0 0 1 {f(x + r)},{f(y)}Z')
+
+
+def shape_path(kind, g):
+    if kind == 'rrect':
+        return rrect_path(*g)
+    if kind == 'rect':
+        x, y, w, h = g
+        return rrect_path(x, y, w, h, 0.001)
+    if kind == 'circle':
+        cx, cy, r = t(g[0]), t(g[1], 'y'), g[2] * S
+        return f'M{f(cx - r)},{f(cy)}a{f(r)},{f(r)} 0 1 0 {f(2 * r)},0a{f(r)},{f(r)} 0 1 0 {f(-2 * r)},0Z'
+    raise ValueError(kind)
+
+
+def android_color(hexstr):  # #RRGGBBAA -> #AARRGGBB
+    h = hexstr.lstrip('#')
+    return '#' + (h[6:8] + h[:6] if len(h) == 8 else h)
+
+
+VEC_HEAD = ('<?xml version="1.0" encoding="utf-8"?>\n<!-- Generated by mobile/scripts/make-icons.py - edit the script, not this file. -->\n'
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
+            '    xmlns:aapt="http://schemas.android.com/aapt"\n'
+            '    android:width="108dp" android:height="108dp"\n'
+            '    android:viewportWidth="108" android:viewportHeight="108">\n')
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(text)
+
+
+def vectors():
+    stops = ''.join(f'                <item android:offset="{o}" android:color="{c}"/>\n' for c, o in GRAD)
+    write(os.path.join(RES, 'drawable', 'ic_launcher_background.xml'), VEC_HEAD +
+          '    <path android:pathData="M0,0h108v108h-108z">\n'
+          '        <aapt:attr name="android:fillColor">\n'
+          '            <gradient android:type="linear" android:startX="0" android:startY="0"\n'
+          '                android:endX="108" android:endY="108">\n' + stops +
+          '            </gradient>\n        </aapt:attr>\n    </path>\n'
+          # soft top-left sheen for depth
+          '    <path android:pathData="M0,0h108v46c-30,-14 -70,-6 -108,14z" android:fillColor="#17FFFFFF"/>\n'
+          '</vector>\n')
+
+    fg = ''.join(f'    <path android:fillColor="{android_color(c)}" android:pathData="{shape_path(k, g)}"/>\n'
+                 for k, g, c, _ in SHAPES)
+    write(os.path.join(RES, 'drawable', 'ic_launcher_foreground.xml'), VEC_HEAD + fg + '</vector>\n')
+
+    # Monochrome (themed icons): only alpha matters, so each object is one even-odd
+    # path — its solid silhouette with the detail cut out as holes. The card is
+    # drawn as a second path so it reads on top of the sheet.
+    mono = ''
+    for group in ('paper', 'card'):
+        parts = [shape_path(k, g) for k, g, _, (grp, role) in SHAPES
+                 if grp == group and role in ('solid', 'hole')]
+        mono += (f'    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" '
+                 f'android:pathData="{"".join(parts)}"/>\n')
+    write(os.path.join(RES, 'drawable', 'ic_launcher_monochrome.xml'), VEC_HEAD + mono + '</vector>\n')
+
+    adaptive = ('<?xml version="1.0" encoding="utf-8"?>\n'
+                '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                '    <background android:drawable="@drawable/ic_launcher_background"/>\n'
+                '    <foreground android:drawable="@drawable/ic_launcher_foreground"/>\n'
+                '    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>\n'
+                '</adaptive-icon>\n')
+    for name in ('ic_launcher', 'ic_launcher_round'):
+        write(os.path.join(RES, 'mipmap-anydpi-v26', name + '.xml'), adaptive)
+
+    # Capacitor's template ships the default robot foreground in drawable-v24, which
+    # would win over drawable/ on every modern phone. Remove it.
+    stale = os.path.join(RES, 'drawable-v24', 'ic_launcher_foreground.xml')
+    if os.path.exists(stale):
+        os.remove(stale)
+
+
+# ---- raster rendering (fallback icons, splash) ---------------------------------------
+def rgba(hexstr):
+    h = hexstr.lstrip('#')
+    vals = [int(h[i:i + 2], 16) for i in range(0, len(h), 2)]
+    return tuple(vals + [255] * (4 - len(vals)))
+
+
+def gradient(px):
+    """Diagonal 3-stop brand gradient, px x px."""
+    vert = Image.linear_gradient('L').resize((px, px))           # 0 at top -> 255 at bottom
+    ramp = Image.blend(vert, vert.transpose(Image.Transpose.TRANSPOSE), 0.5)  # (x+y)/2: TL -> BR
+    out = Image.new('RGBA', (px, px), rgba(GRAD[0][0]))
+    for (c0, o0), (c1, o1) in zip(GRAD, GRAD[1:]):
+        lo, hi = int(o0 * 255), int(o1 * 255)
+        band = ramp.point(lambda v, lo=lo, hi=hi: 0 if v <= lo else 255 if v >= hi else int((v - lo) * 255 / (hi - lo)))
+        mixed = Image.composite(Image.new('RGBA', (px, px), rgba(c1)), Image.new('RGBA', (px, px), rgba(c0)), band)
+        out = Image.composite(mixed, out, ramp.point(lambda v, lo=lo: 255 if v >= lo else 0))
+    return out
+
+
+def render_icon(px, shape='square'):
+    """Full icon (background + foreground) at px, masked to the given launcher shape."""
+    k = 4                                  # supersample
+    n = px * k
+    u = n / 108.0
+    img = gradient(n)
+    sheen = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+    ImageDraw.Draw(sheen).pieslice((-0.6 * n, -1.15 * n, 1.6 * n, 0.45 * n), 0, 180, fill=(255, 255, 255, 23))
+    img = Image.alpha_composite(img, sheen)
+
+    for kind, g, col, _ in SHAPES:
+        layer = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        fill = rgba(col)
+        if kind in ('rrect', 'rect'):
+            x, y, w, h = g[:4]
+            r = g[4] * S * u if kind == 'rrect' else 0
+            d.rounded_rectangle((t(x) * u, t(y, 'y') * u, t(x + w) * u, t(y + h, 'y') * u), radius=r, fill=fill)
+        else:
+            cx, cy, r = t(g[0]) * u, t(g[1], 'y') * u, g[2] * S * u
+            d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill)
+        if fill[3] < 255:                  # shadows: soften
+            layer = layer.filter(ImageFilter.GaussianBlur(1.4 * u))
+        img = Image.alpha_composite(img, layer)
+
+    mask = Image.new('L', (n, n), 0)
+    md = ImageDraw.Draw(mask)
+    if shape == 'circle':
+        md.ellipse((0, 0, n - 1, n - 1), fill=255)
+    elif shape == 'square':                # legacy launcher: rounded square with margin
+        m = n * 0.04
+        md.rounded_rectangle((m, m, n - m, n - m), radius=n * 0.22, fill=255)
+    else:                                  # full bleed
+        md.rectangle((0, 0, n, n), fill=255)
+    img.putalpha(Image.composite(img.getchannel('A'), Image.new('L', (n, n), 0), mask))
+    return img.resize((px, px), Image.LANCZOS)
+
+
+def legacy_mipmaps():
+    for dens, px in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+        d = os.path.join(RES, f'mipmap-{dens}')
+        os.makedirs(d, exist_ok=True)
+        render_icon(px, 'square').save(os.path.join(d, 'ic_launcher.png'))
+        render_icon(px, 'circle').save(os.path.join(d, 'ic_launcher_round.png'))
+        stale = os.path.join(d, 'ic_launcher_foreground.png')  # replaced by the vector
+        if os.path.exists(stale):
+            os.remove(stale)
+
+
+def font(size, bold=True):
+    for name in (('segoeuib.ttf', 'arialbd.ttf') if bold else ('segoeui.ttf', 'arial.ttf')):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            pass
+    return ImageFont.load_default()
+
+
+def splashes():
+    for root, _, files in os.walk(RES):
+        if 'splash.png' not in files:
+            continue
+        path = os.path.join(root, 'splash.png')
+        w, h = Image.open(path).size
+        img = Image.new('RGBA', (w, h), rgba(APP_BG))
+        side = int(min(w, h) * 0.30)
+        icon = render_icon(side, 'square')
+        title_px = max(12, int(side * 0.16))
+        sub_px = max(9, int(side * 0.085))
+        gap = int(side * 0.12)
+        block = side + gap + title_px + int(sub_px * 1.9)
+        top = (h - block) // 2
+        img.alpha_composite(icon, ((w - side) // 2, top))
+        d = ImageDraw.Draw(img)
+        y = top + side + gap
+        d.text((w / 2, y), 'Statement Dashboard', font=font(title_px), fill=rgba('#1F2937'), anchor='mt')
+        d.text((w / 2, y + title_px * 1.35), 'CARDS  ·  STATEMENTS  ·  SPEND', font=font(sub_px, False), fill=rgba(PRIMARY), anchor='mt')
+        img.convert('RGB').save(path)
+
+
+def preview(path):
+    """Contact sheet of the icon in common launcher shapes, for eyeballing changes."""
+    tiles = [render_icon(192, 'square'), render_icon(192, 'circle'), render_icon(192, 'full')]
+    sheet = Image.new('RGBA', (3 * 192 + 4 * 24, 192 + 48), rgba(APP_BG))
+    for i, tile in enumerate(tiles):
+        sheet.alpha_composite(tile, (24 + i * (192 + 24), 24))
+    sheet.save(path)
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) > 2 and sys.argv[1] == '--preview':
+        preview(sys.argv[2])
+        print('preview written to', sys.argv[2])
+    else:
+        vectors()
+        legacy_mipmaps()
+        splashes()
+        print('icons written')

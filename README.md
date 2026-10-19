@@ -48,3 +48,29 @@ git push -u origin main
 
 Overview · Cards · Transactions · Add · Merchants · Cash Back · Instalments ·
 Settings.
+
+## Android app
+
+`mobile/` wraps the **same** `index.html` + `app.css` + `js/` in a Capacitor WebView
+(same approach as the cashback_sspn app). `mobile/scripts/build-www.mjs` copies them into
+`mobile/www`, vendors Chart.js (boots offline), and leaves out two things the phone can't use:
+
+- the **Merchants** tab (merchant clean-up runs through the local enrichment flow on the PC);
+- the **local LLM bridge** (`LLM_BRIDGE`, its Settings rows and health probe).
+
+The edits must match the source exactly — if `app.js`/`settings.js`/`config.js` change shape,
+the build fails and names the file to update in the script.
+
+- **Worker / CORS**: served in the WebView as `https://jgjy926.github.io`
+  (`server.hostname`), which the Worker's allowlist already accepts.
+- **Back button**: closes the bottom sheet → returns to Overview → backgrounds the app.
+  Returning after 2+ minutes re-reads the Worker (`js/mobile.js`).
+
+Build (needs Android Studio for its JDK + Android SDK):
+```bash
+cd mobile
+npm install
+# PowerShell: $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+npm run android:apk
+# -> mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```

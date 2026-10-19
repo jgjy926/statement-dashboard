@@ -1,6 +1,6 @@
 // Merchants tab: pick a merchant from a dropdown, then edit keyword / clean
 // name / category and save a rule. Category is customizable (free text). An
-// optional LLM button asks the local Python bridge (Ollama) to suggest a
+// optional Suggest button asks the local Python bridge for a saved rule's
 // category. Saving a rule writes merchant_cache.json and re-applies to
 // existing transactions via the Worker.
 import { store, loadStore, showToast } from "./app.js";
@@ -123,7 +123,7 @@ function renderEditor(item, container) {
     <label>Category
       <div class="cat-row">
         <input class="r-cat" list="cat-list" value="${escapeAttr(item.category)}" placeholder="pick or type a new one">
-        <button class="ghost-btn r-llm" title="Ask local LLM">🤖 Suggest</button>
+        <button class="ghost-btn r-llm" title="Look up a saved rule (local bridge)">🔎 Suggest</button>
       </div>
     </label>
     <label>Tag <small>(optional — applies to all matches)</small>
@@ -154,9 +154,9 @@ async function suggestViaLLM(btn, item, ed) {
     if (data.merchant_name && !ed.querySelector(".r-name").value) {
       ed.querySelector(".r-name").value = data.merchant_name;
     }
-    showToast(data.category ? `LLM suggests: ${data.category}` : "LLM had no suggestion");
+    showToast(data.category ? `Rule suggests: ${data.category}` : "No saved rule yet — classify it in the monthly Claude batch");
   } catch {
-    showToast("LLM bridge not reachable — run python llm_bridge.py on this PC", "error");
+    showToast("Rule bridge not reachable — run python llm_bridge.py on this PC", "error");
   } finally {
     btn.disabled = false; btn.textContent = old;
   }
