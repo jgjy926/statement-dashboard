@@ -106,6 +106,16 @@ function coversAuto(manual, auto) {
 }
 
 // Group Instalment/BT transactions that carry a ":NNN/NNN" counter into plans.
+//
+// planKey alone can't separate plans of the SAME shape on one card: RHB's
+// "SMART MOVE BAL TRANSFER" RM200/12 from Aug 2026 and two more taken in Oct
+// 2026 all keyed alike, so only the highest counter (03/12) survived and both
+// new BTs vanished from the list and the totals. Two more things tell them apart:
+//   * start month ("YYYY-MM", year included) - statement month minus
+//     (counter - 1), which stays the same on every statement of one plan;
+//   * multiplicity - plans that also share a start month print identical
+//     rows, so the most rows any one statement carries for the group is how
+//     many plans it holds (the Oct statement's two "01/12" rows -> 2 plans).
 function autoPlans() {
   const groups = new Map();
   for (const t of store.rows || []) {
@@ -120,20 +130,35 @@ function autoPlans() {
     // The statement that billed this row, not its posting date (see header).
     const stmtDate = (t.statement_date || t.posting_date || t.transaction_date || "").slice(0, 10);
     const stmtMonth = toYM(stmtDate);
-    const key = planKey(name, tenure, last4, monthly);
-    const prev = groups.get(key);
+    // Billing month of the first instalment (shown, and used to pair a
+    // manual placeholder with this plan).
+    const startMonth = stmtMonth ? addMonths(stmtMonth, -(counter - 1)) : null;
+    const key = `${planKey(name, tenure, last4, monthly)}|${startMonth || ""}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        plan: {
+          id: `auto:${key}`, source: "auto", name, monthly, tenure, tag: t.tag,
+          last4, _counter: counter, _stmt_date: stmtDate || null, start_month: startMonth,
+        },
+        perStmt: new Map(),
+      };
+      groups.set(key, g);
+    }
+    g.perStmt.set(stmtDate, (g.perStmt.get(stmtDate) || 0) + 1);
     // Keep the row with the highest counter — the most recent statement.
-    if (!prev || counter > prev._counter) {
-      groups.set(key, {
-        id: `auto:${key}`, source: "auto", name, monthly, tenure, tag: t.tag,
-        last4, _counter: counter, _stmt_date: stmtDate || null,
-        // Billing month of the first instalment (shown, and used to pair a
-        // manual placeholder with this plan).
-        start_month: stmtMonth ? addMonths(stmtMonth, -(counter - 1)) : null,
-      });
+    if (counter > g.plan._counter) {
+      Object.assign(g.plan, { monthly, tag: t.tag, _counter: counter, _stmt_date: stmtDate || null });
     }
   }
-  return [...groups.values()];
+  const plans = [];
+  for (const { plan, perStmt } of groups.values()) {
+    const copies = Math.max(...perStmt.values());
+    for (let i = 0; i < copies; i++) {
+      plans.push(i === 0 ? plan : { ...plan, id: `${plan.id}#${i + 1}` });
+    }
+  }
+  return plans;
 }
 
 // Instalment / BT charges the auto detector can't follow because the bank prints
