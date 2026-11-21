@@ -23,8 +23,14 @@ import {
   openSheet, closeSheet, showToast,
 } from "./app.js";
 import { createInstalmentPlan, updateInstalmentPlan, deleteInstalmentPlan } from "./api.js";
+import { instalmentTrend } from "./charts.js";
 
 const PROGRESS_RE = /:\s*(\d+)\s*\/\s*(\d+)/; // e.g. ":007/012"
+
+// Monthly view state (kept across re-renders, like the Cash Back tab).
+let selMonth = null; // "YYYY-MM"; null = newest billed month
+let trendWin = 6;    // 3 | 6 | 12
+const PROJECT_AHEAD = 3; // future months drawn from active plans' schedules
 
 // --- month helpers (all months are "YYYY-MM" strings) -----------------------
 function toYM(dateStr) {
@@ -213,6 +219,162 @@ function untrackedHtml(list) {
   </div>`;
 }
 
+// --- monthly view ------------------------------------------------------------
+// What each STATEMENT month actually billed for Instalment / Balance Transfer
+// (bucketed by statement date, matching how plans progress — see header).
+// Items group per plan name + card so a month can be diffed against the one
+// before it: new charges, ended charges, amount changes.
+function billedByMonth() {
+  const months = new Map();
+  for (const t of store.rows || []) {
+    if (!["Instalment", "Balance Transfer"].includes(t.tag)) continue;
+    const ym = toYM(t.statement_date || t.posting_date || t.transaction_date);
+    if (!ym) continue;
+    const billed = -(Number(t.amount) || 0); // charges are negative; credits net off
+    const m = months.get(ym) || { total: 0, inst: 0, bt: 0, items: new Map() };
+    m.total += billed;
+    if (t.tag === "Balance Transfer") m.bt += billed; else m.inst += billed;
+    const name = (t.description || "").split(":")[0].trim();
+    const last4 = t.card?.last4 || "";
+    const key = `${name.toLowerCase()}|${last4}`;
+    const it = m.items.get(key) || { key, name, last4, tag: t.tag, amount: 0, progress: null };
+    it.amount += billed;
+    const p = (t.description || "").match(PROGRESS_RE);
+    if (p) it.progress = `${Number(p[1])}/${Number(p[2])}`;
+    m.items.set(key, it);
+    months.set(ym, m);
+  }
+  return months;
+}
+
+// Commitment still to bill in a future month `ym`, from active plans' schedules.
+function projectedFor(ym, active) {
+  let inst = 0, bt = 0;
+  for (const p of active) {
+    // Full billing window: final statement month back (tenure - 1) months.
+    const to = toYM(p.final_date);
+    const from = to ? addMonths(to, -(p.tenure - 1)) : null;
+    const live = from && to
+      ? ym >= from && ym <= to
+      : monthsBetween(todayIso(), `${ym}-01`) <= p.tenure - p.current; // legacy: no dates
+    if (!live) continue;
+    if (p.tag === "Balance Transfer") bt += p.monthly; else inst += p.monthly;
+  }
+  return { inst, bt };
+}
+
+const r2 = (n) => Math.round(n * 100) / 100;
+
+// Month-on-month chip. More instalment billing is the "bad" direction.
+function momChip(cur, prev, prevLabel) {
+  if (prev == null) return `<span class="mom flat">no prior month</span>`;
+  const d = r2(cur - prev);
+  if (Math.abs(d) < 0.005) return `<span class="mom flat">= ${prevLabel}</span>`;
+  const pct = prev ? ` (${d > 0 ? "+" : ""}${((d / prev) * 100).toFixed(0)}%)` : "";
+  return `<span class="mom ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${formatMYR(Math.abs(d))}${pct}</span><span class="mom-sub">vs ${prevLabel}</span>`;
+}
+function countChip(cur, prev, prevLabel) {
+  if (prev == null) return "";
+  const d = cur - prev;
+  if (!d) return `<span class="mom flat">= ${prevLabel}</span>`;
+  return `<span class="mom ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : "−"}${Math.abs(d)}</span><span class="mom-sub">vs ${prevLabel}</span>`;
+}
+
+function monthlyHtml(byMonth, active) {
+  const billedMonths = [...byMonth.keys()].sort().reverse();
+  if (!billedMonths.length) return "";
+  if (!selMonth || !byMonth.has(selMonth)) selMonth = billedMonths[0];
+  const idx = billedMonths.indexOf(selMonth);
+
+  const prevYM = addMonths(selMonth, -1);
+  const cur = byMonth.get(selMonth);
+  const prev = byMonth.get(prevYM) || null;
+  const curLbl = monthLabel(selMonth), prevLbl = monthLabel(prevYM);
+
+  // Item-level diff vs the previous month.
+  const rows = [...cur.items.values()].map((it) => {
+    const before = prev?.items.get(it.key);
+    return { ...it, status: !prev ? "" : before ? "" : "new", delta: before ? r2(it.amount - before.amount) : null };
+  });
+  const ended = prev ? [...prev.items.values()].filter((it) => !cur.items.has(it.key)) : [];
+  rows.sort((a, b) => (a.status === "new") - (b.status === "new") || b.amount - a.amount);
+  const newCount = rows.filter((r) => r.status === "new").length;
+
+  const opt = billedMonths.map((m) => `<option value="${m}" ${m === selMonth ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
+
+  return `
+    <div class="panel">
+      <div class="panel-head"><h2>Monthly view</h2></div>
+      <div class="month-step">
+        <button class="icon-btn" id="im-prev" ${idx >= billedMonths.length - 1 ? "disabled" : ""} aria-label="Earlier month">‹</button>
+        <select id="im-month">${opt}</select>
+        <button class="icon-btn" id="im-next" ${idx <= 0 ? "disabled" : ""} aria-label="Later month">›</button>
+      </div>
+      <div class="cards-grid">
+        <div class="stat-card"><div class="stat-lbl">Billed · ${curLbl}</div><div class="stat-val">${formatMYR(cur.total)}</div>${momChip(cur.total, prev?.total ?? null, prevLbl)}</div>
+        <div class="stat-card"><div class="stat-lbl">Instalment</div><div class="stat-val sm">${formatMYR(cur.inst)}</div>${momChip(cur.inst, prev?.inst ?? null, prevLbl)}</div>
+        <div class="stat-card"><div class="stat-lbl">Balance transfer</div><div class="stat-val sm">${formatMYR(cur.bt)}</div>${momChip(cur.bt, prev?.bt ?? null, prevLbl)}</div>
+        <div class="stat-card"><div class="stat-lbl">Charges billed</div><div class="stat-val sm">${cur.items.size}</div>${countChip(cur.items.size, prev ? prev.items.size : null, prevLbl)}
+          ${prev ? `<span class="mom-sub">${newCount} new · ${ended.length} ended</span>` : ""}</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Trend</h2>
+        <div class="seg" id="im-trend">
+          ${[3, 6, 12].map((w) => `<button data-w="${w}" class="${trendWin === w ? "on" : ""}">${w}M</button>`).join("")}
+        </div>
+      </div>
+      <div class="trend-line" id="im-trend-line"></div>
+      <div class="chart-box"><canvas id="im-bars"></canvas></div>
+      <div class="field-hint" style="margin:8px 2px 0">* projected from active plans · tap a bar for the change vs the month before</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>${curLbl} vs ${prevLbl}</h2></div>
+      <ul class="mom-list">
+        ${rows.map((r) => `<li class="mom-row">
+          <div class="mom-main"><strong>${esc(r.name)}</strong> ${tagChip(r.tag)}${r.status === "new" ? `<span class="mom-badge new">new</span>` : ""}
+            <div class="plan-meta" style="margin:2px 0 0">${r.last4 ? `••${r.last4}` : ""}${r.progress ? ` · ${r.progress}` : ""}</div></div>
+          <div class="mom-amt">${formatMYR(r.amount)}${r.delta ? `<span class="mom-sub">${r.delta > 0 ? "▲" : "▼"} ${formatMYR(Math.abs(r.delta))}</span>` : ""}</div>
+        </li>`).join("")}
+        ${ended.map((r) => `<li class="mom-row ended">
+          <div class="mom-main"><strong>${esc(r.name)}</strong> ${tagChip(r.tag)}<span class="mom-badge ended">ended</span>
+            <div class="plan-meta" style="margin:2px 0 0">${r.last4 ? `••${r.last4} · ` : ""}not on ${curLbl}</div></div>
+          <div class="mom-amt">—<span class="mom-sub">was ${formatMYR(r.amount)}</span></div>
+        </li>`).join("")}
+      </ul>
+    </div>`;
+}
+
+// Trend window ends at the current calendar month, then PROJECT_AHEAD months.
+function trendSeries(byMonth, active) {
+  const nowYM = todayIso().slice(0, 7);
+  const keys = [], inst = [], bt = [], projected = [];
+  for (let i = trendWin - 1; i >= -PROJECT_AHEAD; i--) {
+    const ym = addMonths(nowYM, -i);
+    // The current month counts as projected until one of its statements is parsed.
+    const future = ym > nowYM || (ym === nowYM && !byMonth.has(ym));
+    const v = future ? projectedFor(ym, active) : byMonth.get(ym) || { inst: 0, bt: 0 };
+    keys.push(ym); inst.push(r2(v.inst)); bt.push(r2(v.bt)); projected.push(future);
+  }
+  return { keys, inst, bt, projected };
+}
+
+function trendSummary(s) {
+  const tot = s.keys.map((_, i) => s.inst[i] + s.bt[i]);
+  const actual = tot.filter((_, i) => !s.projected[i]);
+  const last = actual[actual.length - 1] ?? 0;
+  const first = actual.find((v) => v > 0) ?? actual[0] ?? 0;
+  const avg = actual.length ? actual.reduce((a, b) => a + b, 0) / actual.length : 0;
+  const d = last - first;
+  const dir = Math.abs(d) < 0.005 ? "flat" : d > 0 ? "up" : "down";
+  const word = { up: "rising", down: "falling", flat: "flat" }[dir];
+  const nextProj = tot[s.projected.indexOf(true)];
+  return `Avg ${formatMYR(avg)}/mo over ${actual.length}M · <span class="mom ${dir}">${word} ${dir === "flat" ? "" : `${d > 0 ? "▲" : "▼"} ${formatMYR(Math.abs(d))}`}</span>`
+    + (nextProj != null ? ` · next month ≈ ${formatMYR(nextProj)}` : "");
+}
+
 function manualPlans() {
   return (store.raw?.instalment_plans || []).map((p) => ({ ...p, source: "manual" }));
 }
@@ -306,6 +468,7 @@ export async function render(container) {
   const monthlyCommit = active.reduce((s, p) => s + p.monthly, 0);
   const totalRemaining = active.reduce((s, p) => s + p.remaining, 0);
   const untracked = untrackedCharges(manualPlans());
+  const byMonth = billedByMonth();
 
   container.innerHTML = `
     <div class="tab-head"><h1>Instalments</h1><button id="add-plan" class="ghost-btn">➕ Add plan</button></div>
@@ -314,6 +477,8 @@ export async function render(container) {
       <div class="stat-card"><div class="stat-lbl">Monthly commitment</div><div class="stat-val">${formatMYR(monthlyCommit)}</div></div>
       <div class="stat-card"><div class="stat-lbl">Total remaining</div><div class="stat-val">${formatMYR(totalRemaining)}</div></div>
     </div>
+    ${monthlyHtml(byMonth, active)}
+    <h2 class="section-h">Plans</h2>
     ${active.length ? active.map(planHtml).join("") : `<div class="empty">No active instalment plans</div>`}
     ${completed.length ? `
       <details class="completed-block" ${completed.length <= 4 ? "open" : ""}>
@@ -324,6 +489,21 @@ export async function render(container) {
   `;
 
   document.getElementById("add-plan").addEventListener("click", () => openForm(null, container));
+
+  // Monthly view: month picker (‹ older · newer ›), trend window, chart.
+  const sel = document.getElementById("im-month");
+  if (sel) {
+    const opts = [...sel.options].map((o) => o.value); // newest first
+    const go = (m) => { selMonth = m; render(container); };
+    sel.addEventListener("change", (e) => go(e.target.value));
+    document.getElementById("im-prev").addEventListener("click", () => go(opts[opts.indexOf(selMonth) + 1]));
+    document.getElementById("im-next").addEventListener("click", () => go(opts[opts.indexOf(selMonth) - 1]));
+    container.querySelectorAll("#im-trend button").forEach((b) =>
+      b.addEventListener("click", () => { trendWin = Number(b.dataset.w); render(container); }));
+    const series = trendSeries(byMonth, active);
+    document.getElementById("im-trend-line").innerHTML = trendSummary(series);
+    instalmentTrend(document.getElementById("im-bars"), series);
+  }
   // Pre-fill a new manual plan from an untracked charge; the first statement
   // it appeared on is the start month (editable — the user knows the tenure).
   container.querySelectorAll("[data-track]").forEach((b) =>

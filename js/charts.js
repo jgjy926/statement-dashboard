@@ -137,3 +137,55 @@ export function lineByMonth(canvas, rows, months = 6) {
     },
   });
 }
+
+// Instalment trend: stacked Instalment / Balance Transfer bars per statement
+// month. `s` = { keys, inst[], bt[], projected[] } (projected months are drawn
+// faded). The tooltip footer carries the month-on-month change of the total.
+export function instalmentTrend(canvas, s) {
+  const { Chart } = reset("inst", canvas);
+  const labels = s.keys.map((k) => {
+    const [y, m] = k.split("-");
+    const l = new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+    return s.projected[s.keys.indexOf(k)] ? `${l}*` : l;
+  });
+  const fade = (hex, i) => (s.projected[i] ? hex + "55" : hex);
+  const totals = s.keys.map((_, i) => s.inst[i] + s.bt[i]);
+  const rm = (v) => "RM " + Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  instances.inst = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "Instalment", data: s.inst, backgroundColor: s.keys.map((_, i) => fade("#8e24aa", i)), borderRadius: 4, stack: "a" },
+        { label: "Balance Transfer", data: s.bt, backgroundColor: s.keys.map((_, i) => fade("#f9a825", i)), borderRadius: 4, stack: "a" },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (c) => `${c.dataset.label}: ${rm(c.parsed.y)}`,
+            footer: (items) => {
+              const i = items[0].dataIndex;
+              const lines = [`Total: ${rm(totals[i])}${s.projected[i] ? " (projected)" : ""}`];
+              if (i > 0) {
+                const d = totals[i] - totals[i - 1];
+                const pct = totals[i - 1] ? ` (${d >= 0 ? "+" : ""}${((d / totals[i - 1]) * 100).toFixed(0)}%)` : "";
+                lines.push(`vs prev month: ${d >= 0 ? "+" : "−"}${rm(Math.abs(d))}${pct}`);
+              }
+              return lines;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, beginAtZero: true, ticks: { callback: (v) => "RM " + Number(v).toLocaleString("en-MY") } },
+      },
+    },
+  });
+}
