@@ -96,6 +96,11 @@ export function setCardNil(data) {
   return request("/card/nil", { method: "POST", body: data });
 }
 
+// data = { bank_id, last4, status: "closed"|"active", closed_after?, reason? }
+export function setCardStatus(data) {
+  return request("/card/status", { method: "POST", body: data });
+}
+
 export function saveMerchantRule(data) {
   return request("/merchant/rule", { method: "POST", body: data });
 }
@@ -238,12 +243,43 @@ export function projectMissingStatements(entries, nilSet = new Set(), now = new 
   return { status, missing, nil, last_statement_date: lastSd };
 }
 
+// Apply a user-set card status (card_status["bank:last4"]) to a derived card.
+// A closed card (e.g. a balance transfer that ended, so statements stopped)
+// expects no more statements and owes nothing: stmt_watch is cleared and
+// `closed` is set. A statement dated AFTER `closed_after` means the card is in
+// use again, so the mark is ignored and `reopened` is set instead.
+// Unclosed cards that look finished — 3+ cycles with no statement (awaited or
+// marked no-spend), or a zero last balance and a statement now missing — get
+// `suggest_close`.
+export function applyCardStatus(c, status, entries) {
+  const lastSd = entries.reduce((m, e) => (e.sd && e.sd.slice(0, 10) > m ? e.sd.slice(0, 10) : m), "");
+  if (status && status.status === "closed") {
+    if (!status.closed_after || !lastSd || lastSd <= status.closed_after) {
+      c.closed = { reason: status.reason || null, closed_after: status.closed_after || null };
+      c.stmt_watch = null;
+      c.suggest_close = false;
+      return c;
+    }
+    c.reopened = true;
+  }
+  const w = c.stmt_watch;
+  const zeroBalance = c.closing_balance != null && Math.abs(Number(c.closing_balance) || 0) < 0.005;
+  // Cycles marked no-spend count too: a BT card kept quiet by marking every
+  // month Nil is just as finished as one left dormant.
+  const silent = w ? w.missing.length + w.nil.length : 0;
+  // A zero balance only counts while a statement is actually missing: an idle
+  // card with no spend also bills zero, and its owner marks those cycles Nil.
+  c.suggest_close = silent >= 3 || !!(zeroBalance && w.missing.length);
+  return c;
+}
+
 // One card per (bank_id, last4), enriched with the latest statement's balances.
 // Cards come from statements[].cards[] plus the statement's headline card.
 export function deriveCards(data) {
   const byKey = new Map();
   const paidStatus = data.paid_status || {};
   const nilStatements = data.nil_statements || {};
+  const cardStatus = data.card_status || {};
   // Per-card statement/due dates, for projecting which cycles are still awaited.
   const stmtDatesByKey = new Map();
 
@@ -398,6 +434,8 @@ export function deriveCards(data) {
         nilSet
       );
     }
+    applyCardStatus(c, cardStatus[`${c.bank_id}:${c.last4}`],
+      stmtDatesByKey.get(`${c.bank_id}:${c.last4}`) || []);
   }
   return cards;
 }

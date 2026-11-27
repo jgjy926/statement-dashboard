@@ -120,7 +120,7 @@ function attentionPanel(raw) {
       <span class="attn-ico">${p.icon}</span>
       <span class="attn-main">
         <span class="attn-card">${esc(bankName(c.bank_id))} •••• ${c.last4}</span>
-        <span class="attn-detail">${p.headline} · ${p.sub}</span>
+        <span class="attn-detail">${p.headline} · ${p.sub}${c.suggest_close ? " · looks finished, close it?" : ""}</span>
       </span>
       <span class="attn-go">›</span>
     </button>`;

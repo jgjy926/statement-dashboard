@@ -229,6 +229,31 @@ textarea { min-height: 64px; resize: vertical; }
   cursor: pointer; white-space: nowrap;
 }
 .ccm-nil:active, .ccm-undo:active { background: rgba(255,255,255,0.28); }
+.ccm-close {
+  flex-shrink: 0; border: 1px solid rgba(255,255,255,0.25);
+  background: transparent; color: rgba(255,255,255,0.85); border-radius: 999px;
+  padding: 4px 10px; font: inherit; font-size: 0.7rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.ccm-close.suggest { border-color: #fff; background: rgba(255,255,255,0.22); color: #fff; }
+.ccm-close:active { background: rgba(255,255,255,0.28); }
+.ccm-hint { font-size: 0.65rem; opacity: 0.75; margin-top: 4px; padding-left: 2px; }
+
+/* ---- closed cards (ended BT, cancelled card) ---- */
+.closed-panel > summary { display: flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; }
+.closed-panel > summary::-webkit-details-marker { display: none; }
+.closed-panel > summary::before { content: "›"; color: var(--muted); font-size: 1.1rem; width: 14px; transition: transform 0.15s; }
+.closed-panel[open] > summary::before { transform: rotate(90deg); }
+.closed-panel > summary h2 { margin: 0; }
+.closed-panel[open] > summary { margin-bottom: 10px; }
+.credit-card.is-closed { background: linear-gradient(135deg, #4a4f57, #63686f); opacity: 0.85; }
+.closed-badge { font-size: 0.6rem; font-weight: 700; background: rgba(0,0,0,0.35); color: #fff; padding: 2px 7px; border-radius: 6px; letter-spacing: 0.5px; }
+.cc-closed-note { font-size: 0.7rem; opacity: 0.8; }
+.cc-reopen {
+  margin-top: 10px; width: 100%; border: 1px solid rgba(255,255,255,0.35);
+  background: rgba(255,255,255,0.12); color: #fff; border-radius: 999px;
+  padding: 6px; font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
 .credit-card.flash { animation: cardFlash 1.6s ease; }
 @keyframes cardFlash {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255,202,40,0); }

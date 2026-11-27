@@ -39,7 +39,9 @@ export async function render(container) {
   const spend = rows.filter((t) => Number(t.amount) < 0)
     .reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
 
-  const cards = deriveCards(store.raw);
+  // Closed cards (e.g. an ended balance transfer) owe nothing and expect no
+  // more statements, so they drop out of both figures below.
+  const cards = deriveCards(store.raw).filter((c) => !c.closed);
   // Paid cards no longer count toward what you still owe.
   const outstanding = cards
     .filter((c) => !c.paid)

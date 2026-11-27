@@ -1,6 +1,6 @@
 // Cards tab: all cards grouped by bank, derived from statements.
 import { store, loadStore, formatMYR, formatDate, showToast } from "./app.js";
-import { deriveCards, setCardPaid, setCardNil } from "./api.js";
+import { deriveCards, setCardPaid, setCardNil, setCardStatus } from "./api.js";
 import { setFilter } from "./transactions.js";
 
 const NETWORK = {
@@ -57,8 +57,10 @@ export function watchParts(w) {
 }
 
 // The full missing/no-spend block for a card: the awaited banner (with a Nil
-// button that clears the current cycle) and/or a confirmed no-spend note (with
-// Undo). Both can show at once when a card is part-cleared, part-awaited.
+// button that clears the current cycle, and a Close button for a card whose
+// statements have stopped for good, e.g. an ended balance transfer) and/or a
+// confirmed no-spend note (with Undo). Both can show at once when a card is
+// part-cleared, part-awaited.
 function missingBanner(c) {
   const w = c.stmt_watch;
   if (!w) return "";
@@ -72,7 +74,10 @@ function missingBanner(c) {
       <span class="ccm-txt"><b>${p.headline}</b><i>${p.sub}</i></span>
       <button class="ccm-nil" ${attrs} data-cycle="${p.target.ym}"
         title="No spend this cycle — clear ${monthYear(p.target.statement_date)}">Nil ${monthShort(p.target.statement_date)}</button>
-    </div>`;
+      <button class="ccm-close ${c.suggest_close ? "suggest" : ""}" ${attrs} data-after="${w.last_statement_date}"
+        title="Card closed or balance transfer ended — stop expecting statements">Close</button>
+    </div>
+    ${c.suggest_close ? `<div class="ccm-hint">Looks finished — close the card if no more statements are coming.</div>` : ""}`;
   }
 
   if (w.nil.length) {
@@ -82,9 +87,27 @@ function missingBanner(c) {
       <span class="ccm-ico">✓</span>
       <span class="ccm-txt"><b>No spend confirmed</b><i>${months}</i></span>
       <button class="ccm-undo" ${attrs} data-cycles="${cycles}">Undo</button>
+      ${w.missing.length ? "" : `<button class="ccm-close ${c.suggest_close ? "suggest" : ""}" ${attrs} data-after="${w.last_statement_date}"
+        title="Card closed or balance transfer ended — stop expecting statements">Close</button>`}
     </div>`;
   }
   return html;
+}
+
+// A closed card: no figures or warnings, just what it was and a way back.
+function closedCardHtml(c) {
+  const bits = [c.closed.reason, c.closed.closed_after && `last statement ${monthYear(c.closed.closed_after)}`]
+    .filter(Boolean).join(" · ");
+  return `
+    <div class="credit-card is-closed" id="card-${c.bank_id}-${c.last4}" data-bank="${c.bank_id}" data-last4="${c.last4}">
+      <div class="cc-head">
+        <span class="cc-title">${c.name || "Card"}</span>
+        <span class="cc-tags"><span class="closed-badge">CLOSED</span>${netBadge(c.network)}</span>
+      </div>
+      <div class="cc-num">•••• ${c.last4}</div>
+      ${bits ? `<div class="cc-closed-note">${bits}</div>` : ""}
+      <button class="cc-reopen" data-bank="${c.bank_id}" data-last4="${c.last4}">↩︎ Reopen</button>
+    </div>`;
 }
 
 function cardHtml(c) {
@@ -132,18 +155,31 @@ export function focusCard(bankId, last4) {
 
 export async function render(container) {
   if (!store.raw) await loadStore();
-  const cards = deriveCards(store.raw);
+  const all = deriveCards(store.raw);
+  const cards = all.filter((c) => !c.closed);
+  const closed = all.filter((c) => c.closed);
+  const bankLabel = (b) => (store.config?.banks?.[b]?.bank_name) || b;
 
   const byBank = {};
   for (const c of cards) (byBank[c.bank_id] = byBank[c.bank_id] || []).push(c);
+
+  // Closed cards sit in one collapsed panel at the bottom; it opens by itself
+  // when the Activity tab asked to focus one of them.
+  const focusClosed = pendingFocus && closed.some((c) => `card-${c.bank_id}-${c.last4}` === pendingFocus);
+  const closedPanel = closed.length ? `
+      <details class="panel closed-panel" ${focusClosed ? "open" : ""}>
+        <summary><h2>Closed cards</h2><span class="count-pill">${closed.length}</span></summary>
+        <div class="cards-col">${closed.map((c) => closedCardHtml({ ...c, name: `${c.name || "Card"} · ${bankLabel(c.bank_id)}` })).join("")}</div>
+      </details>` : "";
 
   container.innerHTML = `
     <div class="tab-head"><h1>Cards</h1></div>
     ${Object.keys(byBank).length ? Object.entries(byBank).map(([bank, list]) => `
       <div class="panel">
-        <h2>${(store.config?.banks?.[bank]?.bank_name) || bank}</h2>
+        <h2>${bankLabel(bank)}</h2>
         <div class="cards-col">${list.map(cardHtml).join("")}</div>
-      </div>`).join("") : `<div class="empty">No cards found</div>`}
+      </div>`).join("") : `<div class="empty">${closed.length ? "No open cards" : "No cards found"}</div>`}
+    ${closedPanel}
   `;
 
   // Arrived from an Activity row → scroll to (and briefly flash) that card.
@@ -211,6 +247,39 @@ export async function render(container) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       nilWrite(btn, btn.dataset.cycles.split(","), false);
+    })
+  );
+
+  // "Close" → mark the card closed as of its last statement (asks for a short
+  // reason); "Reopen" → clear the mark. Neither may trigger tap-to-filter.
+  const statusWrite = async (btn, body, toast) => {
+    btn.disabled = true;
+    try {
+      await setCardStatus({ bank_id: btn.dataset.bank, last4: btn.dataset.last4, ...body });
+      store.raw = null;
+      await loadStore();
+      showToast(toast);
+      render(container);
+    } catch {
+      btn.disabled = false;
+    }
+  };
+  container.querySelectorAll(".ccm-close").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const reason = window.prompt(
+        `Close •••• ${btn.dataset.last4}? It stops expecting statements and drops out of what's owed. ` +
+        "A newer statement reopens it.\n\nReason (optional):",
+        "Balance transfer ended"
+      );
+      if (reason === null) return; // cancelled
+      statusWrite(btn, { status: "closed", closed_after: btn.dataset.after, reason }, "Card closed");
+    })
+  );
+  container.querySelectorAll(".cc-reopen").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      statusWrite(btn, { status: "active" }, "Card reopened");
     })
   );
 }
